@@ -1,0 +1,10 @@
+langchain
+langgraph
+langchain-groq
+langsmith
+pydantic
+python-dotenv
+pytest
+sqlalchemy
+fastapi
+uvicorn
