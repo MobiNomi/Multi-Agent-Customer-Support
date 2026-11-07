@@ -93,3 +93,32 @@ def test_runaway_tool_loop_is_stopped_and_session_recovers(client, fake_llm):
                                                "session_id": first.json()["session_id"]})
     assert second.status_code == 200
     assert second.json()["response"] == "Back to normal."
+
+
+def test_chat_returns_sources_used(client, fake_llm):
+    fake_llm.agent_replies = [
+        tool_call("search_knowledge_base", {"query": "support hours"}),
+        AIMessage(content="Humans work Mon-Fri 9:00-18:00 PKT [Company overview and support hours > Human support hours]."),
+    ]
+    data = client.post("/api/v1/chat", json={"message": "what are your support hours?",
+                                             "customer_id": "CUS-1001"}).json()
+    assert data["sources"] == ["Company overview and support hours > Human support hours"]
+
+
+def test_sources_fall_back_to_everything_retrieved(client, fake_llm):
+    fake_llm.agent_replies = [
+        tool_call("search_knowledge_base", {"query": "support hours"}),
+        AIMessage(content="Our team works weekdays."),   # no citation
+    ]
+    data = client.post("/api/v1/chat", json={"message": "when are you open?", "customer_id": "CUS-1001"}).json()
+    assert len(data["sources"]) > 1
+
+
+def test_sources_empty_when_no_search(client, fake_llm):
+    fake_llm.agent_replies = [AIMessage(content="Hello!")]
+    data = client.post("/api/v1/chat", json={"message": "hi", "customer_id": "CUS-1001"}).json()
+    assert data["sources"] == []
+
+
+def test_health_reports_knowledge(client):
+    assert "documents" in client.get("/health").json()["knowledge"]

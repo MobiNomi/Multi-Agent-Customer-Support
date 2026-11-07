@@ -36,3 +36,15 @@ def test_full_billing_turn(live_key):
     data = res.json()
     assert data["assigned_agent"] == "billing_agent"
     assert "TXN-8922" in data["response"] or data["ticket_id"]
+
+
+def test_policy_question_is_grounded(live_key):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as client:
+        res = client.post("/api/v1/chat", json={"message": "Can I get a refund on an annual plan I bought 5 days ago?",
+                                                "customer_id": "CUS-1001"})
+    data = res.json()
+    assert res.status_code == 200
+    assert any("Refund policy" in s for s in data["sources"]), data
+    assert "14" in data["response"], data

@@ -1,7 +1,7 @@
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -12,12 +12,14 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.database.connection import check_db, init_db
 from app.database.seed import seed_if_empty
-from app.graph.history import current_turn_reply
+from app.graph.history import current_turn_reply, current_turn_sources
 from app.graph.workflow import build_support_graph
 from app.llm import LLMNotConfiguredError
 from app.memory import open_checkpointer
+from app.rag.knowledge_base import get_knowledge_base
 from app.tools.db_tools import customer_exists
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -26,6 +28,11 @@ async def lifespan(app: FastAPI):
     init_db()
     if get_settings().seed_demo_data and seed_if_empty():
         logger.info("Empty database: loaded demo data")
+    try:  # build the search index now, so the first chat isn't slow and problems show at startup
+        kb = get_knowledge_base()
+        logger.info("Knowledge base ready: %d documents, %d chunks", len(kb.doc_ids), len(kb.chunks))
+    except FileNotFoundError as exc:
+        logger.warning("Knowledge base unavailable: %s", exc)
     # Checkpointer = per-session conversation memory (SQLite by default, survives restarts).
     with open_checkpointer() as checkpointer:
         app.state.graph = build_support_graph(checkpointer=checkpointer)
@@ -35,7 +42,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Multi-Agent Customer Support System",
     description="Customer support API powered by LangGraph and Groq.",
-    version="1.2.0",
+    version="1.3.0",
     lifespan=lifespan,
 )
 
@@ -58,12 +65,19 @@ class ChatResponse(BaseModel):
     confidence: Optional[float]
     needs_human: bool
     ticket_id: Optional[str]
+    sources: List[str] = Field(default_factory=list,
+                               description="Company documents the agent looked up for this answer.")
 
 
 @app.get("/health")
 def health_check():
     settings = get_settings()
     db_ok = check_db()
+    try:
+        kb = get_knowledge_base()
+        knowledge = f"{len(kb.doc_ids)} documents, {len(kb.chunks)} chunks"
+    except FileNotFoundError:
+        knowledge = "missing knowledge folder"
     body = {
         "status": "ok" if db_ok else "error",
         "service": "multi-agent-support-api",
@@ -71,6 +85,7 @@ def health_check():
         "llm": "configured" if settings.groq_api_key else "missing GROQ_API_KEY",
         "model": settings.llm_model,
         "memory": settings.memory_backend,
+        "knowledge": knowledge,
     }
     return JSONResponse(body, status_code=200 if db_ok else 503)
 
@@ -122,4 +137,5 @@ def chat_endpoint(request: ChatRequest):
         confidence=output.get("confidence"),
         needs_human=output.get("needs_human", False),
         ticket_id=output.get("ticket_id"),
+        sources=current_turn_sources(output.get("messages", [])),
     )

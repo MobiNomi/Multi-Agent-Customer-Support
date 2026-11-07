@@ -1,0 +1,38 @@
+{"question": "I got billed two times for the same order, what happens now?", "answers": ["billing-and-payments::Duplicate charges", "refund-policy::Duplicate charges and billing errors", "faq::Why was I charged twice?"]}
+{"question": "how many days until my refund shows on my bank statement", "answers": ["refund-policy::Refund timelines", "faq::How long does a refund take?"]}
+{"question": "Can I get my money back for the yearly plan if I bought it 10 days ago?", "answers": ["refund-policy::Annual plans"]}
+{"question": "do you refund monthly subscriptions", "answers": ["refund-policy::Monthly plans"]}
+{"question": "what does the Pro plan cost", "answers": ["plans-and-pricing::Pro plan"]}
+{"question": "Is SSO included in Pro?", "answers": ["plans-and-pricing::Plan comparison", "plans-and-pricing::Enterprise plan", "account-and-security::Single sign-on (SSO)"]}
+{"question": "how many team members can I have on the free plan", "answers": ["plans-and-pricing::Free plan", "plans-and-pricing::Plan comparison"]}
+{"question": "which cards can I pay with", "answers": ["billing-and-payments::Accepted payment methods"]}
+{"question": "my card payment failed, will my workspace be deleted?", "answers": ["billing-and-payments::Failed payments"]}
+{"question": "where can I download my invoices as PDF", "answers": ["billing-and-payments::Invoices and receipts"]}
+{"question": "How do I cancel my subscription?", "answers": ["plan-changes-and-cancellation::Cancelling your subscription"]}
+{"question": "if I downgrade do I lose my projects", "answers": ["plan-changes-and-cancellation::Downgrading"]}
+{"question": "what is charged when I upgrade in the middle of the month", "answers": ["plan-changes-and-cancellation::Upgrading"]}
+{"question": "my order has been processing for hours", "answers": ["orders-and-licences::How long activation takes"]}
+{"question": "what does order status delivered mean", "answers": ["orders-and-licences::Order statuses"]}
+{"question": "I forgot my password", "answers": ["account-and-security::Resetting your password", "troubleshooting::Cannot log in"]}
+{"question": "too many wrong login attempts, account locked", "answers": ["account-and-security::Account lockout", "troubleshooting::Cannot log in"]}
+{"question": "lost my phone with the authenticator app", "answers": ["account-and-security::Two-factor authentication (2FA)"]}
+{"question": "how do I make someone else the owner of the workspace", "answers": ["account-and-security::Roles in a workspace"]}
+{"question": "API returns 401 unauthorized", "answers": ["api-guide::401 Unauthorized"]}
+{"question": "getting 429 too many requests from the API", "answers": ["api-guide::429 Too Many Requests"]}
+{"question": "what is the API rate limit on the pro plan", "answers": ["api-guide::Rate limits", "plans-and-pricing::Pro plan"]}
+{"question": "where do I create an API key", "answers": ["api-guide::API keys"]}
+{"question": "webhook deliveries keep failing", "answers": ["api-guide::Webhooks"]}
+{"question": "the app is very slow and boards don't load", "answers": ["troubleshooting::App is slow or pages do not load"]}
+{"question": "my automations stopped running", "answers": ["troubleshooting::Automations are not running"]}
+{"question": "when is scheduled maintenance", "answers": ["troubleshooting::Scheduled maintenance"]}
+{"question": "file upload fails, what's the maximum file size", "answers": ["troubleshooting::File uploads fail"]}
+{"question": "how can I export all my data", "answers": ["privacy-and-data::Exporting your data"]}
+{"question": "do you sell my data to third parties", "answers": ["privacy-and-data::Sharing with third parties"]}
+{"question": "can my data be stored in Europe", "answers": ["privacy-and-data::Where data is stored"]}
+{"question": "what time does human support work", "answers": ["company-overview::Human support hours", "faq::Can I talk to a human?"]}
+{"question": "how fast will support reply to an enterprise customer", "answers": ["company-overview::Response times by plan"]}
+{"question": "can I pay in PKR", "answers": ["faq::Can I pay in Pakistani rupees?", "billing-and-payments::Accepted payment methods"]}
+{"question": "is there a free trial", "answers": ["faq::Is there a free trial of Pro?"]}
+{"question": "student discount", "answers": ["faq::Do you offer discounts for students or non-profits?", "plans-and-pricing::Discounts"]}
+{"question": "does it work with Slack", "answers": ["faq::What integrations are available?"]}
+{"question": "can I use it without internet", "answers": ["faq::Can I use AcmeCloud offline?"]}

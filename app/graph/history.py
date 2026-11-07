@@ -1,7 +1,8 @@
 """Helpers for slicing the conversation into what each node actually needs."""
+import json
 from typing import List, Optional
 
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
 
 def last_human_index(messages: List[AnyMessage]) -> Optional[int]:
@@ -55,3 +56,25 @@ def transcript(messages: List[AnyMessage], limit: int = 6) -> str:
         elif isinstance(msg, AIMessage) and msg.content:
             lines.append(f"Support: {msg.content}")
     return "\n".join(lines[-limit:])
+
+
+def current_turn_sources(messages: List[AnyMessage], tool_name: str = "search_knowledge_base") -> List[str]:
+    """Document sections ("Title > Section") behind the current answer.
+
+    Returns the retrieved sections the reply actually cites in [brackets]. If the reply cites none of
+    them, returns everything retrieved this turn, so the caller can still see what was consulted.
+    """
+    idx = last_human_index(messages)
+    sources: List[str] = []
+    for msg in messages[(idx or 0):]:
+        if isinstance(msg, ToolMessage) and msg.name == tool_name:
+            try:
+                results = json.loads(msg.content).get("results", [])
+            except (ValueError, AttributeError):
+                continue
+            for r in results:
+                if r.get("source") and r["source"] not in sources:
+                    sources.append(r["source"])
+    reply = current_turn_reply(messages)
+    cited = [s for s in sources if f"[{s}]" in reply]
+    return cited or sources

@@ -4,6 +4,7 @@ from app import config
 from app.database import connection
 from app.database.seed import seed_database
 from app.llm import get_llm
+from app.rag.knowledge_base import get_knowledge_base
 from tests.fakes import FakeLLM
 
 
@@ -17,6 +18,7 @@ def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "checkpoints.db"))
     config.get_settings.cache_clear()
     get_llm.cache_clear()
+    get_knowledge_base.cache_clear()
     connection.reset_engine()
     seed_database()
     yield

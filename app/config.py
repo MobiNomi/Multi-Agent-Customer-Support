@@ -14,6 +14,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 DEFAULT_SQLITE_PATH = PROJECT_ROOT / "data" / "support_system.db"
 DEFAULT_MEMORY_PATH = PROJECT_ROOT / "data" / "checkpoints.db"
+DEFAULT_KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
 
 
 def _bool(value: str | None, default: bool) -> bool:
@@ -35,6 +36,10 @@ class Settings:
     llm_timeout: float
     llm_max_retries: int
     max_graph_steps: int
+    knowledge_dir: Path
+    chunk_max_chars: int
+    chunk_overlap: int
+    retrieval_top_k: int
 
 
 @lru_cache(maxsize=1)
@@ -51,4 +56,8 @@ def get_settings() -> Settings:
         llm_timeout=float(os.getenv("LLM_TIMEOUT", "30")),
         llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
         max_graph_steps=int(os.getenv("MAX_GRAPH_STEPS", "12")),
+        knowledge_dir=Path(os.getenv("KNOWLEDGE_DIR") or DEFAULT_KNOWLEDGE_DIR),
+        chunk_max_chars=int(os.getenv("CHUNK_MAX_CHARS", "1200")),
+        chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "150")),
+        retrieval_top_k=int(os.getenv("RETRIEVAL_TOP_K", "4")),
     )

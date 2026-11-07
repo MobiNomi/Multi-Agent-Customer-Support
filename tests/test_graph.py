@@ -125,3 +125,17 @@ def test_threads_are_isolated(fake_llm):
     run(graph, "hi", thread="A")
     state_b, _ = run(graph, "hi there", thread="B")
     assert [m.content for m in state_b["messages"]] == ["hi there", "hello B"]
+
+
+def test_general_agent_answers_from_knowledge_base(fake_llm):
+    fake_llm.agent_replies = [
+        tool_call("search_knowledge_base", {"query": "refund annual plan"}),
+        AIMessage(content="Annual plans can be refunded within 14 days [Refund policy > Annual plans]."),
+    ]
+    graph = build_support_graph(checkpointer=InMemorySaver())
+    state, nodes = run(graph, "what is your policy on annual plans?", thread="kb1")
+
+    assert nodes == ["supervisor", "general_agent", "tool_executor", "general_agent"]
+    result = json.loads(next(m for m in state["messages"] if isinstance(m, ToolMessage)).content)
+    assert result["results"][0]["source"] == "Refund policy > Annual plans"
+    assert "search_knowledge_base" in fake_llm.bound[0]

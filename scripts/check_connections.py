@@ -6,6 +6,7 @@ from app.database.connection import check_db, get_engine, init_db, session_scope
 from app.database.models import Customer
 from app.llm import check_llm
 from app.memory import count_conversations, open_checkpointer
+from app.rag.knowledge_base import get_knowledge_base
 
 
 def main() -> int:
@@ -32,6 +33,13 @@ def main() -> int:
     except Exception as exc:
         ok = False
         print(f"[FAIL] memory    {settings.memory_backend}  {type(exc).__name__}: {exc}")
+
+    try:
+        kb = get_knowledge_base()
+        print(f"[ok]   knowledge {settings.knowledge_dir}  ({len(kb.doc_ids)} documents, {len(kb.chunks)} chunks)")
+    except Exception as exc:
+        ok = False
+        print(f"[FAIL] knowledge {settings.knowledge_dir}  {type(exc).__name__}: {exc}")
 
     try:
         reply = check_llm()
