@@ -1,80 +1,109 @@
+import inspect
 import json
+import logging
 from typing import Literal
-from langchain_core.messages import ToolMessage
-from langgraph.graph import StateGraph, START, END
 
-from app.graph.state import SupportState
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.graph import END, START, StateGraph
+
+from app.graph.agents import AGENT_TOOLS, billing_agent_node, general_agent_node, technical_agent_node
+from app.graph.history import latest_user_text
 from app.graph.router import supervisor_router_node
-from app.graph.agents import billing_agent_node, technical_agent_node, general_agent_node
-from app.tools.db_tools import get_customer_details, get_order_payments, create_support_ticket
+from app.graph.state import SupportState
+from app.tools.db_tools import create_support_ticket, open_ticket
 
-# Map tools for execution
-TOOLS = {
-    "get_customer_details": get_customer_details,
-    "get_order_payments": get_order_payments,
-    "create_support_ticket": create_support_ticket,
-}
+logger = logging.getLogger(__name__)
+
+AGENT_NODES = ("billing_agent", "technical_agent", "general_agent")
+AgentName = Literal["billing_agent", "technical_agent", "general_agent"]
+
+TOOL_REGISTRY = {t.name: t for tools in AGENT_TOOLS.values() for t in tools}
+# Tools that take the customer's ID; the executor injects it from the session.
+CUSTOMER_SCOPED = {name for name, t in TOOL_REGISTRY.items()
+                   if "customer_id" in inspect.signature(t.func).parameters}
 
 
-def tool_execution_node(state: SupportState) -> SupportState:
-    """Executes tool calls requested by an agent and appends results back to messages."""
-    last_message = state["messages"][-1]
-    
-    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
-        return state
+def tool_execution_node(state: SupportState) -> dict:
+    """Run the tool calls in the last agent message and return the results as ToolMessages."""
+    last = state["messages"][-1]
+    calls = getattr(last, "tool_calls", None) or []
+    agent = state.get("assigned_agent")
+    allowed = {t.name for t in AGENT_TOOLS.get(agent, [])}
 
-    for tool_call in last_message.tool_calls:
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
-        tool_call_id = tool_call["id"]
-
-        if tool_name in TOOLS:
-            result = TOOLS[tool_name].invoke(tool_args)
+    results, ticket_id = [], None
+    for call in calls:
+        name = call["name"]
+        if name not in allowed:
+            result = {"error": f"Tool '{name}' is not available to {agent}."}
         else:
-            result = {"error": f"Tool '{tool_name}' not found."}
+            args = dict(call.get("args") or {})
+            if name in CUSTOMER_SCOPED:
+                args["customer_id"] = state["customer_id"]  # overrides anything the model sent
+            try:
+                result = TOOL_REGISTRY[name].invoke(args)
+            except Exception as exc:
+                logger.exception("Tool %s failed", name)
+                result = {"error": f"{name} failed: {exc}"}
 
-        # Append result back as a ToolMessage so the agent can generate a final response
-        state["messages"].append(
-            ToolMessage(
-                content=json.dumps(result),
-                tool_call_id=tool_call_id,
-                name=tool_name
-            )
-        )
+        if name == create_support_ticket.name and isinstance(result, dict) and result.get("ticket_id"):
+            ticket_id = result["ticket_id"]
+        results.append(ToolMessage(content=json.dumps(result, default=str),
+                                   tool_call_id=call["id"], name=name))
 
-    return state
+    update: dict = {"messages": results}
+    if ticket_id:
+        update["ticket_id"] = ticket_id
+    return update
 
 
-def route_supervisor(state: SupportState) -> Literal["billing_agent", "technical_agent", "general_agent", "human_escalation"]:
-    """Determines which agent node to invoke based on supervisor router decision."""
+def human_escalation_node(state: SupportState) -> dict:
+    """Open an escalated ticket and tell the customer a human will take over."""
+    category = {"billing": "Billing", "technical": "Technical"}.get(state.get("intent") or "", "General")
+    try:
+        ticket_id = open_ticket(state["customer_id"], category,
+                                description=latest_user_text(state.get("messages", [])) or "Escalation requested",
+                                priority="High", status="Escalated")
+    except Exception:
+        logger.exception("Could not open escalation ticket")
+        return {
+            "messages": [AIMessage(content=("I'm handing this to our human support team. Something went "
+                                            "wrong while creating your ticket, so please contact support "
+                                            "directly if you don't hear back soon."))],
+            "assigned_agent": "human_escalation",
+            "resolution": "Escalation requested; ticket creation failed.",
+        }
+    return {
+        "messages": [AIMessage(content=(f"I've passed this to our human support team. Your ticket number is "
+                                        f"{ticket_id}, and a support specialist will follow up with you."))],
+        "assigned_agent": "human_escalation",
+        "ticket_id": ticket_id,
+        "resolution": "Escalated to human support operator.",
+    }
+
+
+def route_supervisor(state: SupportState) -> Literal["billing_agent", "technical_agent",
+                                                      "general_agent", "human_escalation"]:
     if state.get("needs_human"):
         return "human_escalation"
-    
-    agent = state.get("assigned_agent", "general_agent")
-    if agent in ["billing_agent", "technical_agent", "general_agent"]:
-        return agent
-    return "general_agent"
+    agent = state.get("assigned_agent")
+    return agent if agent in AGENT_NODES else "general_agent"
 
 
-def should_continue_tools(state: SupportState) -> Literal["tool_executor", "end_node"]:
-    """Checks if the last agent message contains pending tool calls."""
-    last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tool_executor"
-    return "end_node"
+def should_continue_tools(state: SupportState) -> Literal["tool_executor", "end"]:
+    last = state["messages"][-1]
+    return "tool_executor" if getattr(last, "tool_calls", None) else "end"
 
 
-def human_escalation_node(state: SupportState) -> SupportState:
-    """Fallback node when query requires human operator intervention."""
-    state["resolution"] = "Escalated to human support operator."
-    return state
+def route_back_to_agent(state: SupportState) -> AgentName:
+    """Send tool results back to the agent that asked for them."""
+    agent = state.get("assigned_agent")
+    return agent if agent in AGENT_NODES else "general_agent"
 
 
-def build_support_graph():
-    """Constructs and compiles the full multi-agent support graph."""
+def build_support_graph(checkpointer=None):
+    """Build and compile the support graph. Pass a checkpointer to keep conversation memory."""
     builder = StateGraph(SupportState)
 
-    # 1. Add Nodes
     builder.add_node("supervisor", supervisor_router_node)
     builder.add_node("billing_agent", billing_agent_node)
     builder.add_node("technical_agent", technical_agent_node)
@@ -82,34 +111,18 @@ def build_support_graph():
     builder.add_node("tool_executor", tool_execution_node)
     builder.add_node("human_escalation", human_escalation_node)
 
-    # 2. Add Edges
     builder.add_edge(START, "supervisor")
-
-    # Supervisor conditional routing to agents
-    builder.add_conditional_edges(
-        "supervisor",
-        route_supervisor,
-        {
-            "billing_agent": "billing_agent",
-            "technical_agent": "technical_agent",
-            "general_agent": "general_agent",
-            "human_escalation": "human_escalation",
-        }
-    )
-
-    # Agent conditional routing (Tool Execution loop or End)
-    for agent in ["billing_agent", "technical_agent", "general_agent"]:
-        builder.add_conditional_edges(
-            agent,
-            should_continue_tools,
-            {
-                "tool_executor": "tool_executor",
-                "end_node": END
-            }
-        )
-
-    # After tool execution, loop back to the agent to form final response
-    builder.add_edge("tool_executor", "billing_agent")
+    builder.add_conditional_edges("supervisor", route_supervisor, {
+        "billing_agent": "billing_agent",
+        "technical_agent": "technical_agent",
+        "general_agent": "general_agent",
+        "human_escalation": "human_escalation",
+    })
+    for agent in AGENT_NODES:
+        builder.add_conditional_edges(agent, should_continue_tools,
+                                      {"tool_executor": "tool_executor", "end": END})
+    builder.add_conditional_edges("tool_executor", route_back_to_agent,
+                                  {agent: agent for agent in AGENT_NODES})
     builder.add_edge("human_escalation", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

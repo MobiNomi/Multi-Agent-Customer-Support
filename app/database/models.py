@@ -1,8 +1,13 @@
-from datetime import datetime
-from sqlalchemy import Column, String, Float, DateTime, ForeignKey, create_engine
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from datetime import datetime, timezone
+from sqlalchemy import Column, String, Float, DateTime, ForeignKey
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
 
 class Customer(Base):
     __tablename__ = "customers"
@@ -11,7 +16,7 @@ class Customer(Base):
     name = Column(String, nullable=False)
     email = Column(String, nullable=False)
     plan = Column(String, default="Pro")    # Free, Pro, Enterprise
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     orders = relationship("Order", back_populates="customer")
     tickets = relationship("SupportTicket", back_populates="customer")
@@ -24,7 +29,7 @@ class Order(Base):
     customer_id = Column(String, ForeignKey("customers.id"), nullable=False)
     amount = Column(Float, nullable=False)
     status = Column(String, nullable=False) # Processing, Delivered, Cancelled
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     customer = relationship("Customer", back_populates="orders")
     payments = relationship("Payment", back_populates="order")
@@ -39,7 +44,7 @@ class Payment(Base):
     amount = Column(Float, nullable=False)
     status = Column(String, nullable=False) # Successful, Refunded, Duplicate
     transaction_id = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     order = relationship("Order", back_populates="payments")
 
@@ -49,10 +54,10 @@ class SupportTicket(Base):
 
     id = Column(String, primary_key=True)  # e.g. TCK-9001
     customer_id = Column(String, ForeignKey("customers.id"), nullable=False)
-    category = Column(String, nullable=False)  # Billing, Technical, Sales
-    priority = Column(String, default="Medium")
+    category = Column(String, nullable=False)  # Billing, Technical, General
+    priority = Column(String, default="Medium")  # Low, Medium, High, Urgent
     status = Column(String, default="Open")    # Open, Escalated, Closed
     description = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     customer = relationship("Customer", back_populates="tickets")

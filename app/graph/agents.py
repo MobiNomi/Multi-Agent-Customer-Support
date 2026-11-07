@@ -1,70 +1,72 @@
-import os
-from dotenv import load_dotenv
-
-# Load environment variables FIRST before initializing LangChain models
-load_dotenv()
-
-from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
-from app.graph.state import SupportState
-from app.tools.db_tools import get_customer_details, get_order_payments, create_support_ticket
 
-# Initialize Groq LLM using .env variables
-model_name = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
-llm = ChatGroq(
-    groq_api_key=os.getenv("GROQ_API_KEY"),
-    model_name=model_name,
-    temperature=0.0
+from app.graph.history import history_for_llm
+from app.graph.state import SupportState
+from app.llm import get_llm
+from app.tools.db_tools import create_support_ticket, get_customer_details, get_order_payments
+
+# Which tools each specialist may call. The tool executor enforces this list too.
+AGENT_TOOLS = {
+    "billing_agent": [get_customer_details, get_order_payments, create_support_ticket],
+    "technical_agent": [get_customer_details, create_support_ticket],
+    "general_agent": [],
+}
+
+COMMON_RULES = (
+    "Keep replies short, friendly and specific. Every tool already acts on the current customer's "
+    "own account; you cannot look up other customers. Never invent order, payment or ticket details: "
+    "if a tool returns an error, tell the customer plainly and ask them to check the ID."
 )
 
-billing_llm = llm.bind_tools([get_customer_details, get_order_payments, create_support_ticket])
+PROMPTS = {
+    "billing_agent": (
+        "You are the Billing Support Agent. You handle charges, duplicate charges, refunds and invoices.\n"
+        "Check the records with your tools before stating any fact about a payment. If the customer gives "
+        "an order ID, call get_order_payments for it.\n"
+        "If a duplicate charge is confirmed, name the duplicate transaction ID and open a Billing ticket "
+        "for the refund. You cannot issue refunds yourself: say a refund request has been opened and give "
+        "the ticket ID. Never say the money has already been returned."
+    ),
+    "technical_agent": (
+        "You are the Technical Support Specialist. You handle bugs, API errors, configuration, login and "
+        "performance problems.\n"
+        "Give concise, numbered troubleshooting steps. If the problem needs engineering (an outage, data "
+        "loss, a reproducible bug) or the steps did not help, open a Technical ticket and give the ticket ID."
+    ),
+    "general_agent": (
+        "You are the General Customer Support Agent. You answer questions about the service and plans and "
+        "handle greetings.\n"
+        "You do not have a knowledge base yet, so do not invent prices, opening hours or policies. If you "
+        "do not know something, say so and offer to connect the customer with a human agent."
+    ),
+}
 
 
-def billing_agent_node(state: SupportState) -> SupportState:
-    """Specialized agent node for resolving billing and payment issues."""
-    system_prompt = SystemMessage(content=(
-        "You are a specialized Billing Support Agent. Your task is to investigate and resolve payment, "
-        "refund, double-charge, or invoice inquiries.\n"
-        "Use the provided database tools (`get_customer_details`, `get_order_payments`, `create_support_ticket`) "
-        "to check the exact transaction history before answering.\n"
-        "If a duplicate payment is confirmed, acknowledge the duplicate transaction ID and inform the customer "
-        "that a refund/ticket has been initiated."
+def _run_agent(agent_name: str, state: SupportState) -> dict:
+    llm = get_llm()
+    tools = AGENT_TOOLS[agent_name]
+    if tools:
+        llm = llm.bind_tools(tools)
+
+    system = SystemMessage(content=(
+        f"{PROMPTS[agent_name]}\n\n{COMMON_RULES}\n"
+        f"Current customer ID: {state.get('customer_id', 'unknown')}."
     ))
-
-    messages = [system_prompt] + state["messages"]
-    response = billing_llm.invoke(messages)
-
-    state["messages"].append(response)
-    state["assigned_agent"] = "billing_agent"
-    return state
+    response = llm.invoke([system] + history_for_llm(state.get("messages", [])))
+    # Return only what changed; the add_messages reducer appends the reply.
+    return {"messages": [response], "assigned_agent": agent_name}
 
 
-def technical_agent_node(state: SupportState) -> SupportState:
-    """Specialized agent node for resolving technical/API/platform issues."""
-    system_prompt = SystemMessage(content=(
-        "You are a Technical Support Specialist. Provide concise troubleshooting steps for "
-        "platform issues, API integrations, or account errors. Use tools if customer context is needed."
-    ))
-
-    tech_llm = llm.bind_tools([get_customer_details, create_support_ticket])
-    messages = [system_prompt] + state["messages"]
-    response = tech_llm.invoke(messages)
-
-    state["messages"].append(response)
-    state["assigned_agent"] = "technical_agent"
-    return state
+def billing_agent_node(state: SupportState) -> dict:
+    """Specialist for payments, refunds and invoices."""
+    return _run_agent("billing_agent", state)
 
 
-def general_agent_node(state: SupportState) -> SupportState:
-    """Agent node for general inquiries and onboarding."""
-    system_prompt = SystemMessage(content=(
-        "You are a General Customer Support Agent. Answer general questions about services, "
-        "operating hours, and plan features clearly and politely."
-    ))
+def technical_agent_node(state: SupportState) -> dict:
+    """Specialist for platform, API and account errors."""
+    return _run_agent("technical_agent", state)
 
-    messages = [system_prompt] + state["messages"]
-    response = llm.invoke(messages)
 
-    state["messages"].append(response)
-    state["assigned_agent"] = "general_agent"
-    return state
+def general_agent_node(state: SupportState) -> dict:
+    """Generalist for everything else."""
+    return _run_agent("general_agent", state)
