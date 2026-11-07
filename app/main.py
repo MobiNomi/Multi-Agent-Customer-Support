@@ -6,7 +6,6 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field
 
@@ -16,6 +15,7 @@ from app.database.seed import seed_if_empty
 from app.graph.history import current_turn_reply
 from app.graph.workflow import build_support_graph
 from app.llm import LLMNotConfiguredError
+from app.memory import open_checkpointer
 from app.tools.db_tools import customer_exists
 
 logger = logging.getLogger(__name__)
@@ -26,15 +26,16 @@ async def lifespan(app: FastAPI):
     init_db()
     if get_settings().seed_demo_data and seed_if_empty():
         logger.info("Empty database: loaded demo data")
-    # In-memory checkpointer = per-session conversation memory, lost on restart.
-    app.state.graph = build_support_graph(checkpointer=InMemorySaver())
-    yield
+    # Checkpointer = per-session conversation memory (SQLite by default, survives restarts).
+    with open_checkpointer() as checkpointer:
+        app.state.graph = build_support_graph(checkpointer=checkpointer)
+        yield
 
 
 app = FastAPI(
     title="Multi-Agent Customer Support System",
     description="Customer support API powered by LangGraph and Groq.",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
@@ -69,6 +70,7 @@ def health_check():
         "database": "ok" if db_ok else "unreachable",
         "llm": "configured" if settings.groq_api_key else "missing GROQ_API_KEY",
         "model": settings.llm_model,
+        "memory": settings.memory_backend,
     }
     return JSONResponse(body, status_code=200 if db_ok else 503)
 

@@ -13,6 +13,8 @@ def isolated_db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.setenv("SEED_DEMO_DATA", "false")
+    monkeypatch.setenv("MEMORY_BACKEND", "sqlite")
+    monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "checkpoints.db"))
     config.get_settings.cache_clear()
     get_llm.cache_clear()
     connection.reset_engine()

@@ -5,6 +5,7 @@ from app.config import get_settings
 from app.database.connection import check_db, get_engine, init_db, session_scope
 from app.database.models import Customer
 from app.llm import check_llm
+from app.memory import count_conversations, open_checkpointer
 
 
 def main() -> int:
@@ -22,6 +23,15 @@ def main() -> int:
     else:
         ok = False
         print(f"[FAIL] database  {url}  unreachable")
+
+    try:
+        with open_checkpointer() as saver:
+            n = count_conversations(saver)
+        where = settings.memory_db_path if settings.memory_backend == "sqlite" else "RAM (lost on restart)"
+        print(f"[ok]   memory    {settings.memory_backend}  {where}  ({n} saved conversations)")
+    except Exception as exc:
+        ok = False
+        print(f"[FAIL] memory    {settings.memory_backend}  {type(exc).__name__}: {exc}")
 
     try:
         reply = check_llm()

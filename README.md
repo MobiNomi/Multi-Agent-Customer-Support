@@ -20,7 +20,7 @@ flowchart LR
 - **Routing.** The supervisor sorts the latest message into billing, technical, general or escalate, using recent turns to understand short follow-ups such as "yes, do it". The agent is picked from the intent in code, so the two can't disagree.
 - **Tools.** Billing can read customer details and order payments and open tickets. Technical can read customer details and open tickets. General has no tools.
 - **Customer scoping.** `customer_id` is hidden from the model's tool schema, and the executor fills it in from the request. A customer can only see their own orders, even if a prompt tries to make the model ask for someone else's.
-- **Memory.** Each `session_id` keeps its conversation through a LangGraph checkpointer. Sessions are tied to the customer, so reusing a session ID under another customer starts a separate conversation.
+- **Memory.** Each `session_id` keeps its conversation through a LangGraph checkpointer saved to `data/checkpoints.db`, so chats survive server restarts. Sessions are tied to the customer, so reusing a session ID under another customer starts a separate conversation.
 - **Escalation.** A request for a human creates an `Escalated` ticket and returns its ID to the customer.
 
 ## Setup
@@ -32,7 +32,7 @@ cp .env.example .env                               # then add your GROQ_API_KEY
 python -m scripts.check_connections                # checks the database and Groq
 ```
 
-`check_connections` should print two `[ok]` lines. If the database is empty, either run `python -m app.database.seed` or just start the API; with `SEED_DEMO_DATA=true` it loads the demo data on first start.
+`check_connections` should print three `[ok]` lines: database, memory and Groq. If the database is empty, either run `python -m app.database.seed` or just start the API; with `SEED_DEMO_DATA=true` it loads the demo data on first start.
 
 ## Run
 
@@ -62,8 +62,17 @@ The reply includes a `session_id`. Send it back with the next message to continu
 Terminal chat that shows routing and tool calls as they happen:
 
 ```bash
-python -m scripts.chat_cli --customer CUS-1001
+python -m scripts.chat_cli --customer CUS-1001                 # new conversation
+python -m scripts.chat_cli --customer CUS-1001 --session <id>  # resume a saved one
 ```
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+The database and saved conversations live in the `support-data` volume, so they survive `docker compose down` and rebuilds. `docker compose down -v` deletes them.
 
 ## Demo data
 
@@ -89,6 +98,8 @@ All settings are in `.env.example`. The main ones:
 | `LLM_MODEL` | `openai/gpt-oss-20b` | Any Groq model with tool calling |
 | `DATABASE_URL` | SQLite at `data/support_system.db` | Any SQLAlchemy URL |
 | `SEED_DEMO_DATA` | `true` | Load demo rows when the database is empty |
+| `MEMORY_BACKEND` | `sqlite` | `sqlite` keeps chats across restarts; `memory` keeps them in RAM only |
+| `MEMORY_DB_PATH` | `data/checkpoints.db` | Where saved conversations go |
 | `MAX_GRAPH_STEPS` | `12` | Stops runaway tool loops |
 
 ## Project layout
@@ -97,6 +108,7 @@ All settings are in `.env.example`. The main ones:
 app/
   config.py            settings from env / .env
   llm.py               lazy Groq client
+  memory.py            conversation memory (SQLite checkpointer)
   main.py              FastAPI app
   database/
     connection.py      engine, session_scope, init_db, check_db

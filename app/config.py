@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 DEFAULT_SQLITE_PATH = PROJECT_ROOT / "data" / "support_system.db"
+DEFAULT_MEMORY_PATH = PROJECT_ROOT / "data" / "checkpoints.db"
 
 
 def _bool(value: str | None, default: bool) -> bool:
@@ -26,6 +27,8 @@ class Settings:
     database_url: str
     sql_echo: bool
     seed_demo_data: bool
+    memory_backend: str
+    memory_db_path: Path
     groq_api_key: str | None
     llm_model: str
     llm_temperature: float
@@ -40,6 +43,8 @@ def get_settings() -> Settings:
         database_url=os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH}"),
         sql_echo=_bool(os.getenv("SQL_ECHO"), False),
         seed_demo_data=_bool(os.getenv("SEED_DEMO_DATA"), True),
+        memory_backend=os.getenv("MEMORY_BACKEND", "sqlite").strip().lower(),
+        memory_db_path=Path(os.getenv("MEMORY_DB_PATH") or DEFAULT_MEMORY_PATH),
         groq_api_key=os.getenv("GROQ_API_KEY") or None,
         llm_model=os.getenv("LLM_MODEL", "openai/gpt-oss-20b"),
         llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.0")),
