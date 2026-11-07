@@ -1,6 +1,7 @@
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
-from app.graph.history import history_for_llm
+from app.config import get_settings
+from app.graph.history import current_turn_tool_rounds, history_for_llm
 from app.graph.state import SupportState
 from app.llm import get_llm
 from app.tools.db_tools import create_support_ticket, get_customer_details, get_order_payments
@@ -34,6 +35,8 @@ PROMPTS = {
         "Check the customer's records with the account tools before stating any fact about their payments. "
         "If they give an order ID, call get_order_payments for it. Look up the relevant policy with "
         "search_knowledge_base so you can tell them what happens next and how long it takes.\n"
+        "For general policy questions that name no order or payment (for example 'can I get a refund on an "
+        "annual plan?'), one knowledge base search is enough; don't look up account records.\n"
         "If a duplicate charge is confirmed, name the duplicate transaction ID and open a Billing ticket for "
         "the refund. You cannot issue refunds yourself: say a refund request has been opened and give the "
         "ticket ID. Never say the money has already been returned."
@@ -53,13 +56,31 @@ PROMPTS = {
 }
 
 
+FINAL_ANSWER_RULE = (
+    "You have reached the tool limit for this message. Do not call any more tools. Answer now using only "
+    "the information above. If it isn't enough, say what is missing and offer to connect a human agent."
+)
+FALLBACK_REPLY = ("Sorry, I couldn't finish looking into that. Could you rephrase it, "
+                  "or would you like me to pass it to a human agent?")
+
+
 def _run_agent(agent_name: str, state: SupportState) -> dict:
-    llm = get_llm().bind_tools(AGENT_TOOLS[agent_name])
-    system = SystemMessage(content=(
-        f"{PROMPTS[agent_name]}\n\n{COMMON_RULES}\n"
-        f"Current customer ID: {state.get('customer_id', 'unknown')}."
-    ))
-    response = llm.invoke([system] + history_for_llm(state.get("messages", [])))
+    messages = state.get("messages", [])
+    # After MAX_TOOL_ROUNDS rounds of tool calls, the agent must answer with what it already has.
+    # This stops search loops long before the graph's hard step limit is reached.
+    out_of_tools = current_turn_tool_rounds(messages) >= get_settings().max_tool_rounds
+    tools = AGENT_TOOLS[agent_name]
+    llm = get_llm().bind_tools(tools, tool_choice="none") if out_of_tools else get_llm().bind_tools(tools)
+
+    system_text = (f"{PROMPTS[agent_name]}\n\n{COMMON_RULES}\n"
+                   f"Current customer ID: {state.get('customer_id', 'unknown')}.")
+    if out_of_tools:
+        system_text += f"\n\n{FINAL_ANSWER_RULE}"
+    response = llm.invoke([SystemMessage(content=system_text)] + history_for_llm(messages))
+
+    if out_of_tools and getattr(response, "tool_calls", None):
+        # The model ignored tool_choice="none": drop the calls so the turn ends.
+        response = AIMessage(content=response.content or FALLBACK_REPLY)
     # Return only what changed; the add_messages reducer appends the reply.
     return {"messages": [response], "assigned_agent": agent_name}
 

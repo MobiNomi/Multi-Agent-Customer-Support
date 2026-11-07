@@ -7,9 +7,10 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.agents import AGENT_TOOLS, billing_agent_node, general_agent_node, technical_agent_node
-from app.graph.history import latest_user_text
+from app.graph.history import last_human_index, latest_user_text
 from app.graph.router import supervisor_router_node
 from app.graph.state import SupportState
+from app.textnorm import normalize_text
 from app.tools.db_tools import create_support_ticket, open_ticket
 
 logger = logging.getLogger(__name__)
@@ -23,20 +24,39 @@ CUSTOMER_SCOPED = {name for name, t in TOOL_REGISTRY.items()
                    if "customer_id" in inspect.signature(t.func).parameters}
 
 
+def _call_key(name: str, args: dict) -> str:
+    return f"{name}:{json.dumps(args, sort_keys=True, default=str)}"
+
+
+def _clean_args(args: dict) -> dict:
+    return {k: normalize_text(v).strip() if isinstance(v, str) else v for k, v in (args or {}).items()}
+
+
 def tool_execution_node(state: SupportState) -> dict:
     """Run the tool calls in the last agent message and return the results as ToolMessages."""
-    last = state["messages"][-1]
+    messages = state["messages"]
+    last = messages[-1]
     calls = getattr(last, "tool_calls", None) or []
     agent = state.get("assigned_agent")
     allowed = {t.name for t in AGENT_TOOLS.get(agent, [])}
 
+    # Calls already made while answering this message: repeating one is a loop, not new information.
+    start = last_human_index(messages) or 0
+    seen = {_call_key(c["name"], _clean_args(c.get("args")))
+            for m in messages[start:-1] for c in (getattr(m, "tool_calls", None) or [])}
+
     results, ticket_id = [], None
     for call in calls:
         name = call["name"]
+        args = _clean_args(call.get("args"))
+        key = _call_key(name, args)
         if name not in allowed:
             result = {"error": f"Tool '{name}' is not available to {agent}."}
+        elif key in seen:
+            result = {"note": "You already made this exact call while answering this message. "
+                              "Use the earlier result instead of calling it again."}
         else:
-            args = dict(call.get("args") or {})
+            seen.add(key)
             if name in CUSTOMER_SCOPED:
                 args["customer_id"] = state["customer_id"]  # overrides anything the model sent
             try:

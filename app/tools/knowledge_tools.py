@@ -14,7 +14,8 @@ NO_RESULTS_NOTE = ("No relevant documents found. Do not guess: tell the customer
 def search_knowledge_base(query: str) -> Dict[str, Any]:
     """Search AcmeCloud's help documents: plans and pricing, billing, refund policy, cancellations, orders,
     account security, API errors, troubleshooting, privacy and FAQs. Use a short, specific query such as
-    'refund annual plan' or 'error 429'. Call it again with different words if the first results don't fit."""
+    'refund annual plan' or 'error 429'. One search is usually enough; search again only with clearly
+    different words, and if the results still don't answer the question, say so instead of searching more."""
     results = get_knowledge_base().search(query, k=get_settings().retrieval_top_k)
     if not results:
         return {"results": [], "note": NO_RESULTS_NOTE}

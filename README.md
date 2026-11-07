@@ -43,7 +43,20 @@ python -m scripts.check_connections                # checks the database and Gro
 uvicorn app.main:app --reload
 ```
 
-Interactive docs: http://127.0.0.1:8000/docs
+- Chat page: http://127.0.0.1:8000
+- Interactive API docs: http://127.0.0.1:8000/docs
+
+## Chat page
+
+Open http://127.0.0.1:8000 and chat as a customer. Pick a demo customer at the top (Ali or Sara), then type, or click one of the suggested questions.
+
+- Each reply carries a colored tab for the desk that answered it: green Billing, violet Technical, teal General, amber Support team (human handoff).
+- Citations appear as chips inside the reply, and any ticket the agent opened is shown under it.
+- The **Behind this reply** panel shows the route: what the router decided and how confident it was, every tool the agent called with its arguments, and the help articles used. Click any earlier reply to see its route.
+- Conversations survive page reloads and server restarts. **Start new chat** begins a fresh one.
+- On phones the panel opens from the **Details** button.
+
+The page is plain HTML, CSS and JavaScript in `app/static/`, with no build step. Fonts are bundled (`app/static/fonts/`, SIL Open Font License), so it works offline. Set `DEMO_MODE=false` to hide the customer switcher; the page then takes the customer from `?customer=CUS-1001` in the URL until you add a real login.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/chat \
@@ -60,7 +73,15 @@ The reply includes a `session_id`. Send it back with the next message to continu
 | 422 | Invalid body (e.g. missing `customer_id`) |
 | 503 | `GROQ_API_KEY` not set |
 
-`GET /health` reports the database and LLM configuration.
+Other endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Database, LLM, memory and knowledge base status |
+| `GET /api/v1/sessions/{session_id}/messages?customer_id=...` | Earlier messages of a conversation (used to redraw the chat after a reload) |
+| `GET /api/v1/demo/customers` | Demo customer list for the switcher (off when `DEMO_MODE=false`) |
+
+Each chat reply also returns `sources` (the document sections it cited) and `tools_used` (every tool call, in order).
 
 Terminal chat that shows routing and tool calls as they happen:
 
@@ -154,10 +175,13 @@ All settings are in `.env.example`. The main ones:
 | `SEED_DEMO_DATA` | `true` | Load demo rows when the database is empty |
 | `MEMORY_BACKEND` | `sqlite` | `sqlite` keeps chats across restarts; `memory` keeps them in RAM only |
 | `MEMORY_DB_PATH` | `data/checkpoints.db` | Where saved conversations go |
-| `MAX_GRAPH_STEPS` | `12` | Stops runaway tool loops |
+| `MAX_TOOL_ROUNDS` | `4` | Tool-call rounds per message before the agent must answer with what it has |
+| `MAX_GRAPH_STEPS` | `20` | Hard safety limit on graph steps per message |
 | `KNOWLEDGE_DIR` | `knowledge/` | Folder of company files |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` | `1200` / `150` | Chunk size limit and overlap |
 | `RETRIEVAL_TOP_K` | `4` | Chunks returned per search |
+| `DEMO_MODE` | `true` | Show the demo customer switcher and its endpoint |
+| `CORS_ORIGINS` | none | Comma-separated origins allowed to call the API from another domain |
 
 ## Project layout
 
@@ -166,7 +190,8 @@ app/
   config.py            settings from env / .env
   llm.py               lazy Groq client
   memory.py            conversation memory (SQLite checkpointer)
-  main.py              FastAPI app
+  main.py              FastAPI app (API + chat page)
+  static/              chat page: index.html, styles.css, app.js, fonts/
   database/
     connection.py      engine, session_scope, init_db, check_db
     models.py          Customer, Order, Payment, SupportTicket

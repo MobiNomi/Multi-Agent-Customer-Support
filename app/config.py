@@ -36,10 +36,13 @@ class Settings:
     llm_timeout: float
     llm_max_retries: int
     max_graph_steps: int
+    max_tool_rounds: int
     knowledge_dir: Path
     chunk_max_chars: int
     chunk_overlap: int
     retrieval_top_k: int
+    demo_mode: bool
+    cors_origins: tuple
 
 
 @lru_cache(maxsize=1)
@@ -55,9 +58,12 @@ def get_settings() -> Settings:
         llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.0")),
         llm_timeout=float(os.getenv("LLM_TIMEOUT", "30")),
         llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
-        max_graph_steps=int(os.getenv("MAX_GRAPH_STEPS", "12")),
+        max_graph_steps=int(os.getenv("MAX_GRAPH_STEPS", "20")),
+        max_tool_rounds=int(os.getenv("MAX_TOOL_ROUNDS", "4")),
         knowledge_dir=Path(os.getenv("KNOWLEDGE_DIR") or DEFAULT_KNOWLEDGE_DIR),
         chunk_max_chars=int(os.getenv("CHUNK_MAX_CHARS", "1200")),
         chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "150")),
         retrieval_top_k=int(os.getenv("RETRIEVAL_TOP_K", "4")),
+        demo_mode=_bool(os.getenv("DEMO_MODE"), True),
+        cors_origins=tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()),
     )

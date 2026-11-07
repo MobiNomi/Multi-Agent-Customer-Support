@@ -122,3 +122,67 @@ def test_sources_empty_when_no_search(client, fake_llm):
 
 def test_health_reports_knowledge(client):
     assert "documents" in client.get("/health").json()["knowledge"]
+
+
+# ---------- chat page support ----------
+
+def test_chat_page_is_served(client):
+    res = client.get("/")
+    assert res.status_code == 200 and "AcmeCloud Support" in res.text
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/styles.css").status_code == 200
+    assert client.get("/static/fonts/instrument-sans-latin-400-normal.woff2").status_code == 200
+
+
+def test_demo_customers(client):
+    data = client.get("/api/v1/demo/customers").json()
+    assert {"id": "CUS-1001", "name": "Ali Khan", "plan": "Pro", "orders": ["ORD-1034"]} in data
+
+
+def test_demo_customers_disabled(client, monkeypatch):
+    from app import config
+    monkeypatch.setenv("DEMO_MODE", "false")
+    config.get_settings.cache_clear()
+    assert client.get("/api/v1/demo/customers").status_code == 404
+
+
+def test_chat_reports_tools_used(client, fake_llm):
+    fake_llm.agent_replies = [
+        tool_call("get_order_payments", {"order_id": "ORD-1034"}),
+        AIMessage(content="TXN-8922 is a duplicate."),
+    ]
+    data = client.post("/api/v1/chat", json={"message": "charged twice for ORD-1034",
+                                             "customer_id": "CUS-1001"}).json()
+    assert data["tools_used"] == [{"name": "get_order_payments", "args": {"order_id": "ORD-1034"}}]
+
+
+def test_session_history(client, fake_llm):
+    fake_llm.agent_replies = [
+        AIMessage(content="Let me check.", tool_calls=[{"name": "get_customer_details", "args": {}, "id": "c1"}]),
+        AIMessage(content="You're on Pro."),
+    ]
+    sid = client.post("/api/v1/chat", json={"message": "what plan am I on? billing", "customer_id": "CUS-1001"}).json()["session_id"]
+    hist = client.get(f"/api/v1/sessions/{sid}/messages", params={"customer_id": "CUS-1001"}).json()
+    # tool traffic and the "let me check" text that came with a tool call are left out
+    assert hist["messages"] == [{"role": "customer", "content": "what plan am I on? billing"},
+                                {"role": "assistant", "content": "You're on Pro."}]
+
+
+def test_session_history_is_per_customer(client, fake_llm):
+    fake_llm.agent_replies = [AIMessage(content="hi Ali")]
+    sid = client.post("/api/v1/chat", json={"message": "hello", "customer_id": "CUS-1001"}).json()["session_id"]
+    other = client.get(f"/api/v1/sessions/{sid}/messages", params={"customer_id": "CUS-1002"}).json()
+    assert other["messages"] == []
+    assert client.get(f"/api/v1/sessions/{sid}/messages", params={"customer_id": "CUS-0000"}).status_code == 404
+
+
+def test_reply_lookalike_characters_are_cleaned(client, fake_llm):
+    fake_llm.agent_replies = [
+        tool_call("search_knowledge_base", {"query": "support hours"}),
+        AIMessage(content="Order ORD‑1034 and TXN‑8922 "
+                          "[Company overview and support hours > Human support hours]."),
+    ]
+    data = client.post("/api/v1/chat", json={"message": "hours?", "customer_id": "CUS-1001"}).json()
+    assert "ORD-1034" in data["response"] and "TXN-8922" in data["response"]
+    assert "Order ORD-1034" in data["response"]
+    assert data["sources"] == ["Company overview and support hours > Human support hours"]

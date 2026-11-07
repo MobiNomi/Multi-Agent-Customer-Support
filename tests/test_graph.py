@@ -139,3 +139,51 @@ def test_general_agent_answers_from_knowledge_base(fake_llm):
     result = json.loads(next(m for m in state["messages"] if isinstance(m, ToolMessage)).content)
     assert result["results"][0]["source"] == "Refund policy > Annual plans"
     assert "search_knowledge_base" in fake_llm.bound[0]
+
+
+# ---------- loop protection and messy model output ----------
+
+def test_tool_rounds_are_capped_then_agent_must_answer(fake_llm):
+    # A model that never stops searching.
+    fake_llm.agent_replies = [tool_call("search_knowledge_base", {"query": f"refund {i}"}, call_id=f"c{i}")
+                              for i in range(10)]
+    graph = build_support_graph(checkpointer=InMemorySaver())
+    state, nodes = run(graph, "refund question for billing", thread="cap")
+
+    assert nodes.count("tool_executor") == 4                      # MAX_TOOL_ROUNDS default
+    assert fake_llm.tool_choices[-1] == "none"                    # last call: tools switched off
+    assert "tool limit" in fake_llm.calls[-1][0].content          # and told to answer now
+    assert "couldn't finish" in state["messages"][-1].content     # ignored that, so calls were dropped
+    assert not state["messages"][-1].tool_calls
+
+
+def test_forced_answer_uses_model_text_when_given(fake_llm):
+    fake_llm.agent_replies = [tool_call("search_knowledge_base", {"query": f"q{i}"}, call_id=f"c{i}")
+                              for i in range(4)] + [AIMessage(content="Annual plans: 14 days.")]
+    graph = build_support_graph(checkpointer=InMemorySaver())
+    state, _ = run(graph, "billing refund", thread="cap2")
+    assert state["messages"][-1].content == "Annual plans: 14 days."
+
+
+def test_duplicate_tool_call_is_not_run_twice(fake_llm):
+    fake_llm.agent_replies = [
+        tool_call("search_knowledge_base", {"query": "refund annual"}, call_id="a"),
+        tool_call("search_knowledge_base", {"query": "refund annual"}, call_id="b"),
+        AIMessage(content="done"),
+    ]
+    graph = build_support_graph(checkpointer=InMemorySaver())
+    state, _ = run(graph, "billing refund", thread="dup")
+    tool_msgs = [json.loads(m.content) for m in state["messages"] if isinstance(m, ToolMessage)]
+    assert "results" in tool_msgs[0]
+    assert "already made this exact call" in tool_msgs[1]["note"]
+
+
+def test_lookalike_hyphen_in_tool_args_still_finds_order(fake_llm):
+    fake_llm.agent_replies = [
+        tool_call("get_order_payments", {"order_id": "ORD‑1034"}),   # non-breaking hyphen
+        AIMessage(content="ok"),
+    ]
+    graph = build_support_graph(checkpointer=InMemorySaver())
+    state, _ = run(graph, "charged twice", thread="nbh")
+    result = json.loads(next(m for m in state["messages"] if isinstance(m, ToolMessage)).content)
+    assert result["payment_records_count"] == 2

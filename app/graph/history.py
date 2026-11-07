@@ -4,6 +4,8 @@ from typing import List, Optional
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
+from app.textnorm import normalize_text
+
 
 def last_human_index(messages: List[AnyMessage]) -> Optional[int]:
     for i in range(len(messages) - 1, -1, -1):
@@ -42,7 +44,7 @@ def current_turn_reply(messages: List[AnyMessage]) -> str:
     idx = last_human_index(messages)
     for msg in reversed(messages[(idx or 0):]):
         if isinstance(msg, AIMessage) and msg.content:
-            return str(msg.content)
+            return normalize_text(str(msg.content))
     return ""
 
 
@@ -78,3 +80,30 @@ def current_turn_sources(messages: List[AnyMessage], tool_name: str = "search_kn
     reply = current_turn_reply(messages)
     cited = [s for s in sources if f"[{s}]" in reply]
     return cited or sources
+
+
+def current_turn_tool_calls(messages: List[AnyMessage]) -> List[dict]:
+    """Tool calls the agents made while answering the latest message, in order."""
+    idx = last_human_index(messages)
+    calls: List[dict] = []
+    for msg in messages[(idx or 0):]:
+        if isinstance(msg, AIMessage):
+            calls.extend({"name": c["name"], "args": c.get("args") or {}} for c in msg.tool_calls)
+    return calls
+
+
+def conversation_log(messages: List[AnyMessage]) -> List[dict]:
+    """The chat as the customer saw it: their messages and the assistant's text replies, no tool traffic."""
+    log: List[dict] = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            log.append({"role": "customer", "content": str(msg.content)})
+        elif isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+            log.append({"role": "assistant", "content": normalize_text(str(msg.content))})
+    return log
+
+
+def current_turn_tool_rounds(messages: List[AnyMessage]) -> int:
+    """How many times the agent has asked for tools while answering the latest message."""
+    idx = last_human_index(messages)
+    return sum(1 for m in messages[(idx or 0):] if isinstance(m, AIMessage) and m.tool_calls)

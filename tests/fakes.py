@@ -21,9 +21,11 @@ class FakeLLM:
         self.calls: List[list] = []
         self.bound: List[List[str]] = []
         self.router_inputs: List[str] = []
+        self.tool_choices: List[Optional[str]] = []
 
-    def bind_tools(self, tools):
+    def bind_tools(self, tools, tool_choice=None):
         self.bound.append([t.name for t in tools])
+        self.tool_choices.append(tool_choice)
         return self
 
     def with_structured_output(self, schema):
@@ -44,7 +46,7 @@ class _KeywordRouter:
         text = str(messages[-1].content)
         self.parent.router_inputs.append(text)
         latest = text.split("Latest message:")[-1].lower()
-        if any(w in latest for w in ("human", "lawyer", "manager")):
+        if any(w in latest for w in ("human", "lawyer", "manager", "person")):
             return self.schema(intent="escalate", confidence=0.95, needs_human=True)
         if any(w in latest for w in ("charge", "refund", "invoice", "payment", "billing")):
             return self.schema(intent="billing", confidence=0.9, needs_human=False)
