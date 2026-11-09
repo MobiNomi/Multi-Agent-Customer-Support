@@ -5,7 +5,8 @@ tool executor fills it from the authenticated session. A customer can therefore 
 read or write their own records, whatever the model is talked into asking for.
 """
 import uuid
-from typing import Annotated, Any, Dict, Literal
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Any, Dict, List, Literal
 
 from langchain_core.tools import InjectedToolArg, tool
 
@@ -94,4 +95,14 @@ def create_support_ticket(
     except Exception as exc:  # surfaced to the model as data, not a crash
         return {"error": f"Failed to create ticket: {exc}"}
     return {"status": "success", "ticket_id": ticket_id, "message": f"Support ticket {ticket_id} created."}
+
+
+def recent_tickets(customer_id: str, within_minutes: int = 60) -> List[Dict[str, Any]]:
+    """The customer's tickets opened in the last `within_minutes`, newest first."""
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=within_minutes)
+    with session_scope() as session:
+        rows = (session.query(SupportTicket)
+                .filter(SupportTicket.customer_id == customer_id, SupportTicket.created_at >= since)
+                .order_by(SupportTicket.created_at.desc()).all())
+        return [{"ticket_id": t.id, "category": t.category, "status": t.status} for t in rows]
 

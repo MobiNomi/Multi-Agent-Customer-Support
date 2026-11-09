@@ -122,13 +122,13 @@ def test_chat_returns_sources_used(client, fake_llm):
     assert data["sources"] == ["Company overview and support hours > Human support hours"]
 
 
-def test_sources_fall_back_to_everything_retrieved(client, fake_llm):
+def test_retrieved_lists_everything_looked_up(client, fake_llm):
     fake_llm.agent_replies = [
         tool_call("search_knowledge_base", {"query": "support hours"}),
         AIMessage(content="Our team works weekdays."),   # no citation
     ]
     data = client.post("/api/v1/chat", json={"message": "when are you open?"}).json()
-    assert len(data["sources"]) > 1
+    assert data["sources"] == [] and len(data["retrieved"]) > 1
 
 
 def test_sources_empty_when_no_search(client, fake_llm):

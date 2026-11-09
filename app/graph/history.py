@@ -60,12 +60,22 @@ def transcript(messages: List[AnyMessage], limit: int = 6) -> str:
     return "\n".join(lines[-limit:])
 
 
-def current_turn_sources(messages: List[AnyMessage], tool_name: str = "search_knowledge_base") -> List[str]:
-    """Document sections ("Title > Section") behind the current answer.
+def current_turn_retrieved(messages: List[AnyMessage], tool_name: str = "search_knowledge_base") -> List[str]:
+    """Every document section the knowledge tool returned while answering the latest message."""
+    idx = last_human_index(messages)
+    sources: List[str] = []
+    for msg in messages[(idx or 0):]:
+        if isinstance(msg, ToolMessage) and msg.name == tool_name:
+            try:
+                results = json.loads(msg.content).get("results", [])
+            except (ValueError, AttributeError):
+                continue
+            sources.extend(r["source"] for r in results if r.get("source") and r["source"] not in sources)
+    return sources
 
-    Returns the retrieved sections the reply actually cites in [brackets]. If the reply cites none of
-    them, returns everything retrieved this turn, so the caller can still see what was consulted.
-    """
+
+def current_turn_sources(messages: List[AnyMessage], tool_name: str = "search_knowledge_base") -> List[str]:
+    """Retrieved sections ("Title > Section") that the current reply actually cites in [brackets]."""
     idx = last_human_index(messages)
     sources: List[str] = []
     for msg in messages[(idx or 0):]:
@@ -78,8 +88,7 @@ def current_turn_sources(messages: List[AnyMessage], tool_name: str = "search_kn
                 if r.get("source") and r["source"] not in sources:
                     sources.append(r["source"])
     reply = current_turn_reply(messages)
-    cited = [s for s in sources if f"[{s}]" in reply]
-    return cited or sources
+    return [s for s in sources if f"[{s}]" in reply]
 
 
 def current_turn_tool_calls(messages: List[AnyMessage]) -> List[dict]:

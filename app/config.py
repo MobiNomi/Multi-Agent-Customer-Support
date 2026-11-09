@@ -50,6 +50,9 @@ class Settings:
     cookie_secure: bool
     registration_enabled: bool
     registrations_per_hour: int
+    guardrails_enabled: bool
+    chat_messages_per_minute: int
+    max_tickets_per_hour: int
     cors_origins: tuple
 
 
@@ -80,5 +83,8 @@ def get_settings() -> Settings:
         cookie_secure=_bool(os.getenv("COOKIE_SECURE"), False),
         registration_enabled=_bool(os.getenv("REGISTRATION_ENABLED"), True),
         registrations_per_hour=int(os.getenv("REGISTRATIONS_PER_HOUR", "5")),
+        guardrails_enabled=_bool(os.getenv("GUARDRAILS_ENABLED"), True),
+        chat_messages_per_minute=int(os.getenv("CHAT_MESSAGES_PER_MINUTE", "10")),
+        max_tickets_per_hour=int(os.getenv("MAX_TICKETS_PER_HOUR", "3")),
         cors_origins=tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()),
     )

@@ -49,3 +49,10 @@ def test_policy_question_is_grounded(live_key):
     assert res.status_code == 200
     assert any("Refund policy" in s for s in data["sources"]), data
     assert "14" in data["response"], data
+
+
+def test_off_topic_request_is_refused(live_key):
+    from langchain_core.messages import HumanMessage
+    from app.graph.router import supervisor_router_node
+    out = supervisor_router_node({"messages": [HumanMessage(content="Write me a 500-word essay on the French Revolution")]})
+    assert out["intent"] == "off_topic", out

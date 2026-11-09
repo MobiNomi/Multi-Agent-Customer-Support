@@ -8,12 +8,19 @@
     technical_agent:  { name: "Technical",    key: "technical" },
     general_agent:    { name: "General",      key: "general" },
     human_escalation: { name: "Support team", key: "human" },
+    guardrail:        { name: "Safety",       key: "guard" },
+  };
+  const MASKED_WORDS = {
+    card_masked: "card number", cnic_masked: "CNIC number", password_masked: "password",
+    cvv_masked: "card security code", iban_masked: "bank account number",
   };
   const INTENTS = {
     billing: "a billing question",
     technical: "a technical problem",
     general: "a general question",
     escalate: "a request for a person",
+    off_topic: "an off-topic request",
+    unsafe: "a request it can't help with",
   };
 
   const $ = (id) => document.getElementById(id);
@@ -150,7 +157,7 @@
     return svg;
   }
 
-  function buildMeta(data, hasCitations) {
+  function buildMeta(data) {
     const meta = el("div", "msg-meta");
     if (data.ticket_id) {
       const t = el("span", "meta-ticket");
@@ -159,10 +166,6 @@
     }
     if (data.needs_human) {
       meta.append(el("div", "handoff-note", "Human agents reply Monday to Friday, 9:00 to 18:00 PKT."));
-    }
-    // Citation chips already show the sources inline; list them only when the reply didn't cite any.
-    if (data.sources && data.sources.length && !hasCitations) {
-      meta.append(el("div", "meta-sources", `Based on: ${data.sources.map(prettySource).join("; ")}`));
     }
     return meta.childElementCount ? meta : null;
   }
@@ -178,7 +181,7 @@
     const body = el("div", "msg-text");
     body.innerHTML = renderMarkdown(data.response || "");
     bubble.append(body);
-    const meta = buildMeta(data, Boolean(body.querySelector(".cite")));
+    const meta = buildMeta(data);
     if (meta) bubble.append(meta);
     article.append(bubble);
     if (data.assigned_agent) {   // replies with routing details can be opened in the panel
@@ -202,6 +205,16 @@
     renderPanel(replyData.get(article), all[all.length - 1] === article);
   }
 
+  function showMasked(data) {
+    // Show the customer exactly what was sent and saved, and say what was hidden.
+    const bubbles = els.log.querySelectorAll(".msg-customer");
+    const article = bubbles[bubbles.length - 1];
+    if (!article) return;
+    article.querySelector(".bubble").textContent = data.message_masked;
+    const hidden = (data.guardrails || []).map((g) => MASKED_WORDS[g.kind]).filter(Boolean);
+    if (hidden.length) article.append(el("p", "masked-note", `Hidden before sending, for your safety: ${hidden.join(", ")}.`));
+  }
+
   function addTyping() {
     const article = el("article", "msg msg-bot desk-none typing");
     article.setAttribute("aria-label", "The assistant is writing a reply");
@@ -216,6 +229,7 @@
   function errorMessage(err) {
     if (err.status === 503) return "The assistant isn't connected to its AI model. Add GROQ_API_KEY to the .env file and restart the server.";
     if (err.status === 422) return "That message couldn't be sent. Keep it under 4,000 characters.";
+    if (err.status === 429 && err.detail) return err.detail;
     if (err.status) return "The server hit an error while answering. Try again; if it keeps happening, check the server log.";
     return "Can't reach the server. Check that it's running, then try again.";
   }
@@ -262,11 +276,12 @@
     const dl = el("dl", "route");
     dl.append(el("dt", null, "Answered by"));
     const dd = el("dd");
-    const label = !desk ? "Unknown" : desk.key === "human" ? "Support team" : `${desk.name} desk`;
+    const label = !desk ? "Unknown" : desk.key === "human" ? "Support team"
+      : desk.key === "guard" ? "Safety check" : `${desk.name} desk`;
     const pill = el("span", `desk-pill ${desk ? `desk-${desk.key}` : ""}`, label);
     dd.append(pill);
     dl.append(dd);
-    if (typeof data.confidence === "number") {
+    if (typeof data.confidence === "number" && data.intent !== "blocked") {
       dl.append(el("dt", null, "Router confidence"));
       const conf = el("dd", desk ? `desk-${desk.key}` : "");
       const meter = el("span", "meter");
@@ -285,8 +300,14 @@
       if (code) li.append(el("span", "step-code", code));
       steps.append(li);
     };
-    if (data.intent) step(`The router read the message as ${INTENTS[data.intent] || data.intent}.`);
-    if (data.assigned_agent === "human_escalation") {
+    if (data.intent === "blocked") {
+      step("The safety check stopped the message before it reached the AI.");
+    } else if (data.intent) {
+      step(`The router read the message as ${INTENTS[data.intent] || data.intent}.`);
+    }
+    if (data.assigned_agent === "guardrail") {
+      step("Answered with a standard reply. No agent or tool was used.");
+    } else if (data.assigned_agent === "human_escalation") {
       step(`Handed over to the support team${data.ticket_id ? ` with escalated ticket ${data.ticket_id}` : ""}.`);
     } else {
       for (const call of data.tools_used || []) step(describeTool(call), codeLine(call));
@@ -294,15 +315,24 @@
     }
     frag.append(steps);
 
-    if (data.sources && data.sources.length) {
-      frag.append(el("h3", null, "Help articles used"));
+    const lookedUp = data.retrieved || data.sources || [];
+    if (lookedUp.length) {
+      frag.append(el("h3", null, "Help articles looked up"));
       const ul = el("ul", "sources-list");
-      for (const src of data.sources) {
+      for (const src of lookedUp) {
         const parts = src.split(" > ");
         const li = el("li");
         li.append(el("span", "source-doc", parts[0]), document.createTextNode(parts.slice(1).join(" › ") || parts[0]));
+        if ((data.sources || []).includes(src)) li.append(el("span", "source-cited", " (cited)"));
         ul.append(li);
       }
+      frag.append(ul);
+    }
+
+    if (data.guardrails && data.guardrails.length) {
+      frag.append(el("h3", null, "Safety checks"));
+      const ul = el("ul", "guard-list");
+      for (const g of data.guardrails) ul.append(el("li", null, g.message));
       frag.append(ul);
     }
 
@@ -403,6 +433,7 @@
       typing.remove();
       state.sessionId = data.session_id;
       store.set(sessionKey(state.customerId), data.session_id);
+      if (data.message_masked) showMasked(data);
       saveDetails(data.session_id, data);
       selectReply(addBotMessage(data));
     } catch (err) {

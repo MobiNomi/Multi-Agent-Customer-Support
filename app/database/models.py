@@ -69,3 +69,16 @@ class SupportTicket(Base):
     created_at = Column(DateTime, default=utcnow)
 
     customer = relationship("Customer", back_populates="tickets")
+
+
+class GuardrailEvent(Base):
+    """One row each time a guardrail fires. Never contains the sensitive text itself."""
+    __tablename__ = "guardrail_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    customer_id = Column(String, index=True, nullable=True)
+    thread_id = Column(String, nullable=True)
+    stage = Column(String, nullable=False)      # input, router, action, output
+    kind = Column(String, nullable=False, index=True)
+    detail = Column(String, default="")
+

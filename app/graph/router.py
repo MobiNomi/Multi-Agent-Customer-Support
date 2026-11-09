@@ -15,6 +15,8 @@ INTENT_TO_AGENT = {
     "technical": "technical_agent",
     "general": "general_agent",
     "escalate": "human_escalation",
+    "off_topic": "refusal",
+    "unsafe": "refusal",
 }
 
 ROUTER_PROMPT = (
@@ -24,6 +26,10 @@ ROUTER_PROMPT = (
     "- technical: bugs, API errors, configuration, login or performance problems.\n"
     "- general: opening hours, policies, plan features, greetings, anything else.\n"
     "- escalate: asks for a human, threatens legal action, or is extremely angry.\n"
+    "- off_topic: has nothing to do with AcmeCloud or the customer's account, e.g. homework, essays, coding "
+    "tasks unrelated to the AcmeCloud API, general trivia, other companies' products.\n"
+    "- unsafe: harassment, hate, threats, sexual content, or requests for illegal or harmful help.\n"
+    "When unsure between general and off_topic, choose general.\n"
     "Use the earlier conversation only to understand short follow-ups such as 'yes, do it'.\n"
     "Set needs_human to true only for the escalate cases."
 )
@@ -31,7 +37,7 @@ ROUTER_PROMPT = (
 
 class RoutingDecision(BaseModel):
     """Structured output of the supervisor."""
-    intent: Literal["billing", "technical", "general", "escalate"] = Field(
+    intent: Literal["billing", "technical", "general", "escalate", "off_topic", "unsafe"] = Field(
         description="Primary intent of the customer's latest message."
     )
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence between 0.0 and 1.0.")

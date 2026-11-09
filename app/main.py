@@ -22,9 +22,12 @@ from app.config import get_settings
 from app.database.connection import check_db, init_db, session_scope
 from app.database.models import Customer
 from app.database.seed import DEMO_ACCOUNTS, DEMO_PASSWORD, ensure_demo_passwords, seed_if_empty
-from app.graph.history import (conversation_log, current_turn_reply, current_turn_sources,
-                               current_turn_tool_calls)
+from app.graph.history import (conversation_log, current_turn_reply, current_turn_retrieved,
+                               current_turn_sources, current_turn_tool_calls)
 from app.graph.workflow import build_support_graph
+from app.guardrails.notes import notes as guardrail_notes
+from app.guardrails.notes import record as record_guardrails
+from app.guardrails.sensitive import mask_sensitive
 from app.llm import LLMNotConfiguredError
 from app.memory import open_checkpointer
 from app.rag.knowledge_base import get_knowledge_base
@@ -53,6 +56,7 @@ async def lifespan(app: FastAPI):
     except FileNotFoundError as exc:
         logger.warning("Knowledge base unavailable: %s", exc)
     app.state.registration_limiter = SlidingWindowLimiter(settings.registrations_per_hour, 3600)
+    app.state.chat_limiter = SlidingWindowLimiter(settings.chat_messages_per_minute, 60)
     # Checkpointer = per-session conversation memory (SQLite by default, survives restarts).
     with open_checkpointer() as checkpointer:
         app.state.graph = build_support_graph(checkpointer=checkpointer)
@@ -63,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Multi-Agent Customer Support System",
     description="Customer support API powered by LangGraph and Groq.",
-    version="1.5.0",
+    version="1.6.0",
     lifespan=lifespan,
 )
 
@@ -90,6 +94,12 @@ class ToolUse(BaseModel):
     args: Dict[str, Any]
 
 
+class GuardrailNote(BaseModel):
+    stage: str = Field(description="input, router, action or output")
+    kind: str
+    message: str
+
+
 class ChatResponse(BaseModel):
     response: str
     session_id: str
@@ -99,9 +109,16 @@ class ChatResponse(BaseModel):
     needs_human: bool
     ticket_id: Optional[str]
     sources: List[str] = Field(default_factory=list,
-                               description="Company documents the answer is based on.")
+                               description="Document sections the reply cites.")
+    retrieved: List[str] = Field(default_factory=list,
+                                 description="Every document section the agent looked up for this reply.")
     tools_used: List[ToolUse] = Field(default_factory=list,
                                       description="Tools the agent called for this answer, in order.")
+    guardrails: List[GuardrailNote] = Field(default_factory=list,
+                                            description="Safety checks that changed or stopped something.")
+    message_masked: Optional[str] = Field(default=None,
+                                          description="Your message as it was sent and saved, if sensitive "
+                                                      "details were hidden.")
 
 
 class HistoryMessage(BaseModel):
@@ -199,13 +216,30 @@ def chat_endpoint(request: ChatRequest, user: AuthUser = Depends(get_current_use
     # The customer comes from the signed-in session, never from the request body.
     customer_id = user.id
     session_id = request.session_id or uuid.uuid4().hex
+    settings = get_settings()
+
+    message, masked_kinds = request.message, []
+    if settings.guardrails_enabled:
+        allowed, retry_after = app.state.chat_limiter.hit(customer_id)
+        if not allowed:
+            raise HTTPException(status_code=429,
+                                detail=f"You're sending messages too quickly. Wait {retry_after} seconds and try again.",
+                                headers={"Retry-After": str(retry_after)})
+        # Hide card numbers, passwords etc. before the message is sent to the model or saved anywhere.
+        message, masked_kinds = mask_sensitive(request.message)
+        record_guardrails(masked_kinds, customer_id, f"{customer_id}:{session_id}")
+
     turn_input = {
-        "messages": [HumanMessage(content=request.message)],
+        "messages": [HumanMessage(content=message)],
         "customer_id": customer_id,
         # Per-turn fields start clean even though the conversation persists.
         "ticket_id": None,
         "needs_human": False,
         "resolution": None,
+        "intent": None,
+        "assigned_agent": None,
+        "confidence": None,
+        "guardrail_notes": guardrail_notes(masked_kinds),
     }
 
     try:
@@ -239,7 +273,10 @@ def chat_endpoint(request: ChatRequest, user: AuthUser = Depends(get_current_use
         needs_human=output.get("needs_human", False),
         ticket_id=output.get("ticket_id"),
         sources=current_turn_sources(messages),
+        retrieved=current_turn_retrieved(messages),
         tools_used=current_turn_tool_calls(messages),
+        guardrails=output.get("guardrail_notes") or [],
+        message_masked=message if masked_kinds else None,
     )
 
 

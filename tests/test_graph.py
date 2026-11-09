@@ -29,7 +29,7 @@ def test_billing_flow_uses_tools_and_answers(fake_llm):
     graph = build_support_graph(checkpointer=InMemorySaver())
     state, nodes = run(graph, "I was charged twice for ORD-1034", thread="t1")
 
-    assert nodes == ["supervisor", "billing_agent", "tool_executor", "billing_agent"]
+    assert nodes == ["input_guard", "supervisor", "billing_agent", "tool_executor", "billing_agent", "output_guard"]
     tool_msg = next(m for m in state["messages"] if isinstance(m, ToolMessage))
     assert json.loads(tool_msg.content)["payment_records_count"] == 2
     assert state["assigned_agent"] == "billing_agent"
@@ -45,7 +45,7 @@ def test_tool_results_return_to_the_agent_that_called_them(fake_llm):
     graph = build_support_graph(checkpointer=InMemorySaver())
     state, nodes = run(graph, "I get an API error 401", thread="t2")
 
-    assert nodes == ["supervisor", "technical_agent", "tool_executor", "technical_agent"]
+    assert nodes == ["input_guard", "supervisor", "technical_agent", "tool_executor", "technical_agent", "output_guard"]
     assert state["assigned_agent"] == "technical_agent"
 
 
@@ -91,7 +91,7 @@ def test_escalation_opens_ticket_and_replies(fake_llm):
     graph = build_support_graph(checkpointer=InMemorySaver())
     state, nodes = run(graph, "I want to talk to a human right now", thread="t6")
 
-    assert nodes == ["supervisor", "human_escalation"]
+    assert nodes == ["input_guard", "supervisor", "human_escalation"]
     assert state["needs_human"] is True
     assert state["ticket_id"] in state["messages"][-1].content
     with session_scope() as s:
@@ -135,7 +135,7 @@ def test_general_agent_answers_from_knowledge_base(fake_llm):
     graph = build_support_graph(checkpointer=InMemorySaver())
     state, nodes = run(graph, "what is your policy on annual plans?", thread="kb1")
 
-    assert nodes == ["supervisor", "general_agent", "tool_executor", "general_agent"]
+    assert nodes == ["input_guard", "supervisor", "general_agent", "tool_executor", "general_agent", "output_guard"]
     result = json.loads(next(m for m in state["messages"] if isinstance(m, ToolMessage)).content)
     assert result["results"][0]["source"] == "Refund policy > Annual plans"
     assert "search_knowledge_base" in fake_llm.bound[0]

@@ -1,9 +1,10 @@
 """Demo data. Run `python -m app.database.seed` to wipe and reseed the database."""
+from datetime import timedelta
 from functools import lru_cache
 
 from app.auth.passwords import hash_password
 from app.database.connection import get_engine, init_db, session_scope
-from app.database.models import Base, Customer, Order, Payment, SupportTicket
+from app.database.models import Base, Customer, Order, Payment, SupportTicket, utcnow
 
 # Demo sign-ins. Shown on the sign-in page only when DEMO_MODE=true.
 DEMO_PASSWORD = "demo1234"
@@ -31,7 +32,8 @@ def _demo_rows():
         Payment(id="PAY-5003", customer_id="CUS-1002", order_id="ORD-1035", amount=2500.00,
                 status="Successful", transaction_id="TXN-9001"),
         SupportTicket(id="TCK-9001", customer_id="CUS-1001", category="Billing", priority="High",
-                      status="Open", description="Duplicate charge on ORD-1034"),
+                      status="Open", description="Duplicate charge on ORD-1034",
+                      created_at=utcnow() - timedelta(days=3)),   # older than the ticket guard's 1-hour window
     ]
 
 

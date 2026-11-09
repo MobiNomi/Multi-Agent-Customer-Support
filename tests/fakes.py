@@ -46,6 +46,10 @@ class _KeywordRouter:
         text = str(messages[-1].content)
         self.parent.router_inputs.append(text)
         latest = text.split("Latest message:")[-1].lower()
+        if any(w in latest for w in ("homework", "essay", "poem", "recipe")):
+            return self.schema(intent="off_topic", confidence=0.9, needs_human=False)
+        if any(w in latest for w in ("hate you", "kill")):
+            return self.schema(intent="unsafe", confidence=0.9, needs_human=False)
         if any(w in latest for w in ("human", "lawyer", "manager", "person")):
             return self.schema(intent="escalate", confidence=0.95, needs_human=True)
         if any(w in latest for w in ("charge", "refund", "invoice", "payment", "billing")):

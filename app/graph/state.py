@@ -16,3 +16,5 @@ class SupportState(TypedDict, total=False):
     # Set when a ticket is opened during the current turn.
     ticket_id: Optional[str]
     resolution: Optional[str]
+    # Guardrails that fired during the current turn (reset by the API each turn).
+    guardrail_notes: List[dict]
