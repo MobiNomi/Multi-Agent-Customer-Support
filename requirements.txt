@@ -6,6 +6,8 @@ langsmith
 pydantic>=2.7
 python-dotenv
 sqlalchemy>=2.0
+pyjwt>=2.8
+pwdlib[argon2]>=0.2
 snowballstemmer>=2.2
 fastapi>=0.115
 uvicorn[standard]

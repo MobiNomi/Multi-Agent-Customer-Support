@@ -63,8 +63,11 @@ def session_scope() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create any missing tables. Safe to call on every startup."""
-    Base.metadata.create_all(get_engine())
+    """Create any missing tables and columns. Safe to call on every startup."""
+    from app.database.migrations import ensure_schema
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    ensure_schema(engine)
 
 
 def check_db() -> bool:

@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AcmeCloud Support</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232346D8'/%3E%3Crect x='7' y='8' width='4.5' height='16' rx='1.5' fill='white'/%3E%3Crect x='13.75' y='8' width='4.5' height='11' rx='1.5' fill='white'/%3E%3Crect x='20.5' y='8' width='4.5' height='7' rx='1.5' fill='white'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/styles.css?v=1.4.2">
+  <link rel="stylesheet" href="/static/styles.css?v=1.6.0">
 </head>
-<body class="panel-open">
+<body class="panel-open is-loading">
   <header class="topbar">
     <a class="brand" href="/" aria-label="AcmeCloud Support home">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -19,17 +19,62 @@
       <span class="brand-name">AcmeCloud</span>
       <span class="brand-sub">Support</span>
     </a>
-    <div class="topbar-actions">
-      <label class="customer-picker" id="customer-wrap">
-        <span class="customer-label">Demo customer</span>
-        <select id="customer"></select>
-      </label>
+    <div class="topbar-actions" id="chat-actions" hidden>
+      <p class="signed-in"><span class="signed-in-label">Signed in as</span> <strong id="account-name"></strong></p>
       <button id="new-chat" class="btn-quiet" type="button"><span class="label-long">Start new chat</span><span class="label-short">New chat</span></button>
       <button id="toggle-panel" class="btn-quiet" type="button" aria-controls="panel" aria-expanded="true">Hide details</button>
+      <button id="sign-out" class="btn-quiet" type="button">Sign out</button>
     </div>
   </header>
 
-  <main class="layout">
+  <main id="login-view" class="login" hidden>
+    <div class="login-inner" id="signin-panel">
+      <h1 class="login-title">Sign in to get help</h1>
+      <p class="login-text">Use the email address on your AcmeCloud account.</p>
+      <p id="login-notice" class="login-notice" role="status" hidden></p>
+      <form id="login-form" class="login-form" novalidate>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" spellcheck="false" required>
+        <p id="email-error" class="field-error" hidden></p>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <p id="password-error" class="field-error" hidden></p>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button id="login-submit" class="btn-primary" type="submit">Sign in</button>
+      </form>
+      <p class="switch-line" id="to-signup-line" hidden>New to AcmeCloud? <button id="to-signup" class="link-button" type="button">Create an account</button></p>
+      <section id="demo-accounts" class="demo-accounts" aria-labelledby="demo-title" hidden>
+        <h2 id="demo-title">Demo accounts</h2>
+        <p class="demo-text">Both use the password <code id="demo-password"></code>.</p>
+        <div id="demo-list" class="demo-list"></div>
+      </section>
+    </div>
+
+    <div class="login-inner" id="signup-panel" hidden>
+      <h1 class="login-title">Create your account</h1>
+      <p class="login-text">You'll be signed in straight away and can start chatting with support.</p>
+      <form id="signup-form" class="login-form" novalidate>
+        <label for="su-name">Full name</label>
+        <input id="su-name" name="name" type="text" autocomplete="name" maxlength="100" required>
+        <p id="su-name-error" class="field-error" hidden></p>
+        <label for="su-email">Email</label>
+        <input id="su-email" name="email" type="email" autocomplete="email" spellcheck="false" maxlength="254" required>
+        <p id="su-email-error" class="field-error" hidden></p>
+        <label for="su-password">Password</label>
+        <input id="su-password" name="password" type="password" autocomplete="new-password" aria-describedby="su-password-hint" required>
+        <p id="su-password-hint" class="field-hint">At least 8 characters. Avoid common passwords.</p>
+        <p id="su-password-error" class="field-error" hidden></p>
+        <label for="su-confirm">Repeat password</label>
+        <input id="su-confirm" name="confirm" type="password" autocomplete="new-password" required>
+        <p id="su-confirm-error" class="field-error" hidden></p>
+        <p id="signup-error" class="form-error" role="alert" hidden></p>
+        <button id="signup-submit" class="btn-primary" type="submit">Create account</button>
+      </form>
+      <p class="switch-line">Already have an account? <button id="to-signin" class="link-button" type="button">Sign in</button></p>
+    </div>
+  </main>
+
+  <main id="chat-view" class="layout" hidden>
     <section class="chat" aria-label="Conversation">
       <div id="log" class="log" role="log" aria-live="polite" aria-relevant="additions"></div>
       <div class="composer-wrap">
@@ -53,6 +98,6 @@
     </aside>
   </main>
 
-  <script src="/static/app.js?v=1.4.2" defer></script>
+  <script src="/static/app.js?v=1.6.0" defer></script>
 </body>
 </html>

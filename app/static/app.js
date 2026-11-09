@@ -19,11 +19,22 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     log: $("log"), form: $("composer"), input: $("input"), send: $("send"),
-    customer: $("customer"), customerWrap: $("customer-wrap"),
+    chatView: $("chat-view"), chatActions: $("chat-actions"), accountName: $("account-name"), signOut: $("sign-out"),
+    loginView: $("login-view"), loginForm: $("login-form"), email: $("email"), password: $("password"),
+    emailError: $("email-error"), passwordError: $("password-error"), loginError: $("login-error"),
+    loginNotice: $("login-notice"), loginSubmit: $("login-submit"),
+    demoAccounts: $("demo-accounts"), demoList: $("demo-list"), demoPassword: $("demo-password"),
+    signinPanel: $("signin-panel"), signupPanel: $("signup-panel"), toSignupLine: $("to-signup-line"),
+    toSignup: $("to-signup"), toSignin: $("to-signin"), signupForm: $("signup-form"),
+    suName: $("su-name"), suEmail: $("su-email"), suPassword: $("su-password"), suConfirm: $("su-confirm"),
+    suNameError: $("su-name-error"), suEmailError: $("su-email-error"),
+    suPasswordError: $("su-password-error"), suConfirmError: $("su-confirm-error"),
+    signupError: $("signup-error"), signupSubmit: $("signup-submit"),
     newChat: $("new-chat"), toggle: $("toggle-panel"), closePanel: $("close-panel"),
     panelBody: $("panel-body"),
   };
-  const state = { customers: [], customerId: null, sessionId: null, busy: false };
+  const state = { account: null, customerId: null, sessionId: null, busy: false, demoLoaded: false, optionsLoaded: false };
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const narrow = window.matchMedia("(max-width: 900px)");
 
   // localStorage can be blocked (private mode, sandboxed frames): never let it break the chat.
@@ -56,7 +67,7 @@
 
   function scrollDown() { els.log.scrollTop = els.log.scrollHeight; }
 
-  function currentCustomer() { return state.customers.find((c) => c.id === state.customerId); }
+  function currentCustomer() { return state.account; }
 
   function prettySource(source) { return source.split(" > ").join(" › "); }
 
@@ -204,7 +215,6 @@
 
   function errorMessage(err) {
     if (err.status === 503) return "The assistant isn't connected to its AI model. Add GROQ_API_KEY to the .env file and restart the server.";
-    if (err.status === 404) return "This customer doesn't exist. Pick another customer at the top.";
     if (err.status === 422) return "That message couldn't be sent. Keep it under 4,000 characters.";
     if (err.status) return "The server hit an error while answering. Try again; if it keeps happening, check the server log.";
     return "Can't reach the server. Check that it's running, then try again.";
@@ -343,9 +353,8 @@
     state.sessionId = store.get(sessionKey(state.customerId));
     if (state.sessionId) {
       try {
-        const url = `${API}/api/v1/sessions/${encodeURIComponent(state.sessionId)}/messages` +
-                    `?customer_id=${encodeURIComponent(state.customerId)}`;
-        const res = await fetch(url);
+        const res = await fetch(`${API}/api/v1/sessions/${encodeURIComponent(state.sessionId)}/messages`);
+        if (res.status === 401) { showLogin("Your session has ended. Sign in again to continue."); return; }
         if (res.ok) {
           const data = await res.json();
           if (data.messages.length) {
@@ -380,8 +389,14 @@
       const res = await fetch(`${API}/api/v1/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, customer_id: state.customerId, session_id: state.sessionId || undefined }),
+        body: JSON.stringify({ message: text, session_id: state.sessionId || undefined }),
       });
+      if (res.status === 401) {
+        typing.remove();
+        showLogin("Your session has ended. Sign in again and your message will still be in the box.");
+        els.input.value = text;
+        return;
+      }
       let data = null;
       try { data = await res.json(); } catch { /* non-JSON error page */ }
       if (!res.ok) throw Object.assign(new Error("request failed"), { status: res.status, detail: data && data.detail });
@@ -407,27 +422,221 @@
     request(text);
   }
 
-  async function loadCustomers() {
+  // ---------- sign-in ----------
+
+  function showChat(account) {
+    state.account = account;
+    state.customerId = account.id;
+    els.accountName.textContent = `${account.name} (${account.plan})`;
+    els.loginView.hidden = true;
+    els.chatView.hidden = false;
+    els.chatActions.hidden = false;
+    document.body.classList.remove("is-loading");
+    openConversation().then(() => els.input.focus());
+  }
+
+  function showLogin(notice) {
+    state.account = null;
+    state.customerId = null;
+    state.sessionId = null;
+    els.log.replaceChildren();
+    els.chatView.hidden = true;
+    els.chatActions.hidden = true;
+    els.loginView.hidden = false;
+    document.body.classList.remove("is-loading");
+    els.loginNotice.hidden = !notice;
+    els.loginNotice.textContent = notice || "";
+    clearLoginErrors();
+    els.password.value = "";
+    showSigninPanel();
+    loadDemoAccounts();
+    loadAuthOptions();
+  }
+
+  function showSigninPanel() {
+    els.signupPanel.hidden = true;
+    els.signinPanel.hidden = false;
+    (els.email.value ? els.password : els.email).focus();
+  }
+
+  function showSignupPanel() {
+    els.signinPanel.hidden = true;
+    els.signupPanel.hidden = false;
+    clearSignupErrors();
+    if (!els.suEmail.value && els.email.value) els.suEmail.value = els.email.value.trim();
+    els.suName.focus();
+  }
+
+  function clearLoginErrors() {
+    for (const [input, msg] of [[els.email, els.emailError], [els.password, els.passwordError]]) {
+      input.removeAttribute("aria-invalid");
+      msg.hidden = true;
+    }
+    els.loginError.hidden = true;
+  }
+
+  function fieldError(input, msg, text) {
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", msg.id);
+    msg.textContent = text;
+    msg.hidden = false;
+  }
+
+  function validateLogin() {
+    clearLoginErrors();
+    const email = els.email.value.trim();
+    let ok = true;
+    if (!email) { fieldError(els.email, els.emailError, "Enter your email address."); ok = false; }
+    else if (!EMAIL_RE.test(email)) { fieldError(els.email, els.emailError, "Enter an email address like name@example.com."); ok = false; }
+    if (!els.password.value) { fieldError(els.password, els.passwordError, "Enter your password."); ok = false; }
+    if (!ok) (els.email.getAttribute("aria-invalid") ? els.email : els.password).focus();
+    return ok;
+  }
+
+  async function signIn(email, password) {
+    els.loginNotice.hidden = true;           // an old "signed out" or "session ended" note no longer applies
+    els.loginError.hidden = true;
+    els.loginSubmit.disabled = true;
+    els.loginSubmit.textContent = "Signing in";
     try {
-      const res = await fetch(`${API}/api/v1/demo/customers`);
-      if (!res.ok) throw new Error(String(res.status));
-      state.customers = await res.json();
+      const res = await fetch(`${API}/api/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      let data = null;
+      try { data = await res.json(); } catch { /* ignore */ }
+      if (res.ok) { showChat(data.customer); return; }
+      els.loginError.textContent = res.status === 401 || res.status === 429
+        ? (data && data.detail) || "Email or password is incorrect."
+        : "Sign-in failed on the server. Try again in a moment.";
+      els.loginError.hidden = false;
+      els.password.select();
     } catch {
-      state.customers = [];
+      els.loginError.textContent = "Can't reach the server. Check that it's running, then try again.";
+      els.loginError.hidden = false;
+    } finally {
+      els.loginSubmit.disabled = false;
+      els.loginSubmit.textContent = "Sign in";
     }
-    if (!state.customers.length) {   // demo mode off: take ?customer=... from the URL
-      els.customerWrap.hidden = true;
-      state.customerId = new URLSearchParams(location.search).get("customer") || "CUS-1001";
-      return;
+  }
+
+  async function loadDemoAccounts() {
+    if (state.demoLoaded) return;
+    state.demoLoaded = true;
+    try {
+      const res = await fetch(`${API}/api/v1/demo/accounts`);
+      if (!res.ok) return;                 // demo mode is off
+      const accounts = await res.json();
+      if (!accounts.length) return;
+      els.demoPassword.textContent = accounts[0].password;
+      for (const a of accounts) {
+        const b = el("button", "demo-account");
+        b.type = "button";
+        b.append(el("span", "demo-account-name", `Sign in as ${a.name}`),
+                 el("span", "demo-account-meta", `${a.email}, ${a.plan} plan`));
+        b.addEventListener("click", () => {
+          els.email.value = a.email;
+          els.password.value = a.password;
+          clearLoginErrors();
+          signIn(a.email, a.password);
+        });
+        els.demoList.append(b);
+      }
+      els.demoAccounts.hidden = false;
+    } catch { /* demo list is optional */ }
+  }
+
+  async function loadAuthOptions() {
+    if (state.optionsLoaded) return;
+    try {
+      const res = await fetch(`${API}/api/v1/auth/options`);
+      if (!res.ok) return;
+      const options = await res.json();
+      state.optionsLoaded = true;
+      els.toSignupLine.hidden = !options.registration_enabled;
+    } catch { /* sign-up link stays hidden */ }
+  }
+
+  // ---------- create account ----------
+
+  const signupFields = () => [
+    [els.suName, els.suNameError], [els.suEmail, els.suEmailError],
+    [els.suPassword, els.suPasswordError], [els.suConfirm, els.suConfirmError],
+  ];
+
+  function clearSignupErrors() {
+    for (const [input, msg] of signupFields()) { input.removeAttribute("aria-invalid"); msg.hidden = true; }
+    els.signupError.hidden = true;
+    els.signupError.replaceChildren();
+  }
+
+  function validateSignup() {
+    clearSignupErrors();
+    const name = els.suName.value.trim(), email = els.suEmail.value.trim(), pw = els.suPassword.value;
+    if (!name) fieldError(els.suName, els.suNameError, "Enter your name.");
+    if (!email) fieldError(els.suEmail, els.suEmailError, "Enter your email address.");
+    else if (!EMAIL_RE.test(email)) fieldError(els.suEmail, els.suEmailError, "Enter an email address like name@example.com.");
+    if (pw.length < 8) fieldError(els.suPassword, els.suPasswordError, "Use a password of at least 8 characters.");
+    else if (els.suConfirm.value !== pw) fieldError(els.suConfirm, els.suConfirmError, "The two passwords don't match.");
+    const firstBad = signupFields().find(([input]) => input.getAttribute("aria-invalid"));
+    if (firstBad) { firstBad[0].focus(); return false; }
+    return true;
+  }
+
+  function signupFailure(text, offerSignIn) {
+    els.signupError.replaceChildren(document.createTextNode(text));
+    if (offerSignIn) {
+      const b = el("button", "link-button", "Go to sign in");
+      b.type = "button";
+      b.addEventListener("click", () => { els.email.value = els.suEmail.value.trim(); showSigninPanel(); });
+      els.signupError.append(" ", b);
     }
-    for (const c of state.customers) {
-      const option = el("option", null, `${c.name} (${c.plan})`);
-      option.value = c.id;
-      els.customer.append(option);
+    els.signupError.hidden = false;
+  }
+
+  async function createAccount() {
+    els.signupSubmit.disabled = true;
+    els.signupSubmit.textContent = "Creating account";
+    try {
+      const res = await fetch(`${API}/api/v1/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: els.suName.value.trim(), email: els.suEmail.value.trim(),
+                               password: els.suPassword.value }),
+      });
+      let data = null;
+      try { data = await res.json(); } catch { /* ignore */ }
+      if (res.status === 201) {
+        els.signupForm.reset();
+        showChat(data.customer);
+        return;
+      }
+      const detail = data && typeof data.detail === "string" ? data.detail : null;
+      if (res.status === 422 && detail && /password/i.test(detail)) {
+        fieldError(els.suPassword, els.suPasswordError, detail);
+        els.suPassword.focus();
+      } else if (res.status === 422 && detail && /email/i.test(detail)) {
+        fieldError(els.suEmail, els.suEmailError, detail);
+        els.suEmail.focus();
+      } else if (res.status === 409) {
+        signupFailure("An account with this email already exists.", true);
+      } else {
+        signupFailure(detail || "The account couldn't be created. Try again in a moment.", false);
+      }
+    } catch {
+      signupFailure("Can't reach the server. Check that it's running, then try again.", false);
+    } finally {
+      els.signupSubmit.disabled = false;
+      els.signupSubmit.textContent = "Create account";
     }
-    const saved = store.get("acme:customer");
-    state.customerId = state.customers.some((c) => c.id === saved) ? saved : state.customers[0].id;
-    els.customer.value = state.customerId;
+  }
+
+  async function signOut() {
+    // Forget this browser's copies of the conversation details; the server keeps the chat itself.
+    if (state.sessionId) store.del(detailsKey(state.sessionId));
+    try { await fetch(`${API}/api/v1/auth/logout`, { method: "POST" }); } catch { /* still sign out locally */ }
+    showLogin("You're signed out.");
   }
 
   // ---------- events ----------
@@ -453,11 +662,31 @@
     els.input.style.height = `${Math.min(els.input.scrollHeight, 160)}px`;
   });
 
-  els.customer.addEventListener("change", () => {
-    state.customerId = els.customer.value;
-    store.set("acme:customer", state.customerId);
-    openConversation();
+  els.loginForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (validateLogin()) signIn(els.email.value.trim(), els.password.value);
   });
+  for (const input of [els.email, els.password]) {
+    input.addEventListener("input", () => {
+      if (input.getAttribute("aria-invalid")) clearLoginErrors();
+    });
+  }
+  els.signOut.addEventListener("click", signOut);
+  els.toSignup.addEventListener("click", showSignupPanel);
+  els.toSignin.addEventListener("click", showSigninPanel);
+  els.signupForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (validateSignup()) createAccount();
+  });
+  for (const [input] of signupFields()) {
+    input.addEventListener("input", () => {
+      if (input.getAttribute("aria-invalid")) {
+        const pair = signupFields().find(([i]) => i === input);
+        input.removeAttribute("aria-invalid");
+        pair[1].hidden = true;
+      }
+    });
+  }
 
   els.newChat.addEventListener("click", () => {
     if (state.sessionId) store.del(detailsKey(state.sessionId));
@@ -477,5 +706,7 @@
 
   if (narrow.matches) els.input.placeholder = "Ask a question";
   setPanel(!narrow.matches);
-  loadCustomers().then(openConversation).then(() => els.input.focus());
+  fetch(`${API}/api/v1/auth/me`)
+    .then((res) => (res.ok ? res.json().then(showChat) : showLogin()))
+    .catch(() => showLogin("Can't reach the server. Check that it's running, then reload the page."));
 })();

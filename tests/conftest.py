@@ -13,6 +13,8 @@ def isolated_db(tmp_path, monkeypatch):
     """Every test gets its own seeded SQLite file and no real API key."""
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setenv("AUTH_SECRET", "test-secret-" + "x" * 40)
+    monkeypatch.setenv("DEMO_MODE", "true")
     monkeypatch.setenv("SEED_DEMO_DATA", "false")
     monkeypatch.setenv("MEMORY_BACKEND", "sqlite")
     monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "checkpoints.db"))

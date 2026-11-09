@@ -5,7 +5,7 @@ tool executor fills it from the authenticated session. A customer can therefore 
 read or write their own records, whatever the model is talked into asking for.
 """
 import uuid
-from typing import Annotated, Any, Dict, List, Literal
+from typing import Annotated, Any, Dict, Literal
 
 from langchain_core.tools import InjectedToolArg, tool
 
@@ -95,10 +95,3 @@ def create_support_ticket(
         return {"error": f"Failed to create ticket: {exc}"}
     return {"status": "success", "ticket_id": ticket_id, "message": f"Support ticket {ticket_id} created."}
 
-
-def list_customers(limit: int = 50) -> List[Dict[str, Any]]:
-    """Customers with their order IDs, for the demo customer switcher. Never exposed to the model."""
-    with session_scope() as session:
-        customers = session.query(Customer).order_by(Customer.id).limit(limit).all()
-        return [{"id": c.id, "name": c.name, "plan": c.plan, "orders": [o.id for o in c.orders]}
-                for c in customers]

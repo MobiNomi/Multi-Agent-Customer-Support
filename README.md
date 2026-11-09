@@ -1,43 +1,166 @@
 # Multi-Agent Customer Support
 
-A customer support API for AcmeCloud, a fictional software company. A supervisor routes each message to a specialist agent (billing, technical or general). The agents answer from the company's own documents (RAG), look up the customer's records through database tools, and hand anything that needs a person to a human with a ticket. It's built with LangGraph, Groq, FastAPI and SQLAlchemy.
+An AI customer support system in which a team of specialised agents answers customer questions. The agents look up real records and the company's own documents, cite their sources, and hand over to a human when they should.
 
-```mermaid
-flowchart LR
-    U([Customer message]) --> S[supervisor<br/>intent router]
-    S -->|billing| B[billing_agent]
-    S -->|technical| T[technical_agent]
-    S -->|general| G[general_agent]
-    S -->|escalate| H[human_escalation<br/>opens ticket]
-    B & T & G -->|tool calls| X[tool_executor]
-    X -->|results go back to<br/>the calling agent| B & T & G
-    X -.-> K[(knowledge base<br/>chunked company files)]
-    X -.-> D[(database<br/>customers, orders, tickets)]
-    B & T & G --> E([Reply])
-    H --> E
-```
+It is built for **AcmeCloud**, a fictional project-management software company, and includes a working chat website with customer accounts (sign-up and sign-in), a REST API, a searchable knowledge base (RAG), conversation memory and a full test suite.
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-1C3C3C)
+![Groq](https://img.shields.io/badge/LLM-Groq-F55036)
+![Tests](https://img.shields.io/badge/tests-116-2EA44F)
+
+![Chat page with a Technical desk reply and the "Behind this reply" panel](docs/chat-page.png)
+
+---
+
+## Contents
+
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Tech stack](#tech-stack)
+- [Getting started](#getting-started)
+- [Using the chat page](#using-the-chat-page)
+- [Accounts and sign-in](#accounts-and-sign-in)
+- [API](#api)
+- [Knowledge base and RAG](#knowledge-base-and-rag)
+- [Demo data](#demo-data)
+- [Safety measures](#safety-measures)
+- [Testing](#testing)
+- [Configuration](#configuration)
+- [Running with Docker](#running-with-docker)
+- [Project structure](#project-structure)
+- [Limitations and roadmap](#limitations-and-roadmap)
+
+---
+
+## What it does
+
+A customer types a question into the chat page. Behind it, an AI team handles the message the way a real help desk would:
+
+- **A router** reads each message and decides which desk should handle it: billing, technical, general, or a human.
+- **Three specialist agents** answer it:
+  - **Billing**: charges, duplicate payments, refunds, invoices, orders.
+  - **Technical**: API errors, login problems, sync and performance issues.
+  - **General**: plans, features, accounts, privacy, everything else.
+- **Tools** let the agents act instead of guess. They can search the company documents, check the customer's account and payments, and open support tickets.
+- **Human handoff**: when a customer asks for a person or is very upset, the system opens an escalated ticket and tells them their ticket number.
+
+Main features:
+
+| Feature | Description |
+|---|---|
+| Multi-agent routing | A supervisor classifies every message and sends it to the right specialist, using earlier turns to understand short follow-ups like "yes, do it". |
+| Retrieval-augmented answers | Agents answer policy, pricing and how-to questions only from the company's documents, and cite the section they used. |
+| Account tools | Agents read the customer's orders and payments and open tickets in the database. |
+| Customer accounts | Customers create an account or sign in with email and password. Passwords are stored as Argon2 hashes, sessions use signed tokens in an HttpOnly cookie, accounts lock after 5 wrong passwords, and sign-ups are rate-limited. |
+| Customer data isolation | The customer comes from the signed-in session, and the server, not the AI, decides whose account a tool reads. A customer can never see someone else's orders. |
+| Conversation memory | Conversations are saved to SQLite and continue after page reloads and server restarts. |
+| Chat website | Desk tabs on each reply, citation chips, ticket numbers, and a panel that shows exactly how each reply was produced. |
+| Loop protection | Agents get a limited number of tool rounds per message and can't repeat identical calls. |
+| Measured retrieval | A set of 38 customer questions scores the search quality, and a test fails if it gets worse. |
+| Offline tests | 113 tests run with a fake model: no API key, no network, about 15 seconds. |
+
+---
 
 ## How it works
 
-- **Routing.** The supervisor sorts the latest message into billing, technical, general or escalate, using recent turns to understand short follow-ups such as "yes, do it". The agent is picked from the intent in code, so the two can't disagree.
-- **Knowledge base (RAG).** Every agent can call `search_knowledge_base`, which searches the company files in `knowledge/`. Agents must answer company questions only from what it returns, cite the section in square brackets, and say they don't know when nothing matches. The API returns the sections used in `sources`.
-- **Account tools.** Billing can read customer details and order payments and open tickets. Technical can read customer details and open tickets.
-- **Customer scoping.** `customer_id` is hidden from the model's tool schema, and the executor fills it in from the request. A customer can only see their own orders, even if a prompt tries to make the model ask for someone else's.
-- **Memory.** Each `session_id` keeps its conversation through a LangGraph checkpointer saved to `data/checkpoints.db`, so chats survive server restarts. Sessions are tied to the customer, so reusing a session ID under another customer starts a separate conversation.
-- **Escalation.** A request for a human creates an `Escalated` ticket and returns its ID to the customer.
-
-## Setup
-
-```bash
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env                               # then add your GROQ_API_KEY
-python -m scripts.check_connections                # checks the database and Groq
+```mermaid
+flowchart TD
+    U([Customer message]) --> API[FastAPI: checks sign-in and session]
+    API --> M[(Conversation memory)]
+    M --> R{Router}
+    R -->|billing| B[Billing agent]
+    R -->|technical| T[Technical agent]
+    R -->|general| G[General agent]
+    R -->|asks for a person| H[Human handoff: escalated ticket]
+    B & T & G -->|tool calls| X[Tool executor]
+    X --> KB[(Knowledge base: chunked company docs)]
+    X --> DB[(Database: customers, orders, payments, tickets)]
+    X -->|results| B & T & G
+    B & T & G --> Reply([Reply with citations])
+    H --> Reply
 ```
 
-`check_connections` should print four `[ok]` lines: database, memory, knowledge and Groq. If the database is empty, either run `python -m app.database.seed` or just start the API; with `SEED_DEMO_DATA=true` it loads the demo data on first start.
+### The journey of one message
 
-## Run
+Example: Ali (customer `CUS-1001`) writes *"I was charged twice for ORD-1034."*
+
+1. **Chat page to API.** The browser sends the message and the conversation ID. Ali's session cookie goes with it automatically.
+2. **Checks.** The API reads Ali's identity from the signed session token (never from the message itself) and loads the conversation from memory.
+3. **Routing.** The router classifies the message as *billing* (with a confidence score) and passes it to the Billing agent.
+4. **Tools.** The Billing agent:
+   - checks the payments on ORD-1034 and finds two $149 payments, one marked *Duplicate* (`TXN-8922`);
+   - searches the knowledge base for the duplicate-charge and refund policy;
+   - opens a Billing ticket for the refund.
+5. **Reply.** The agent answers only from the tool results and cites its sources, for example `[Refund policy > Duplicate charges and billing errors]`.
+6. **Save.** The turn is saved to memory.
+7. **Display.** The page shows the reply with a green Billing tab, citation chips and the ticket number. The details panel lists the router's decision, every tool call and the documents used.
+
+When the router decides the customer wants a person, steps 3 to 5 are replaced by the human handoff: an `Escalated` ticket is created and the customer receives its number.
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) (state graph, conditional routing, checkpointing) |
+| LLM | Groq API (`openai/gpt-oss-20b` by default), via `langchain-groq` |
+| Tools | LangChain tools with injected arguments for customer scoping |
+| API | FastAPI + Uvicorn |
+| Sign-in | Argon2 password hashing (`pwdlib`), signed JWT session tokens (`pyjwt`) |
+| Database | SQLAlchemy 2.0, SQLite by default (any SQLAlchemy URL, such as Postgres, works) |
+| Memory | LangGraph SQLite checkpointer (`langgraph-checkpoint-sqlite`) |
+| Retrieval | Heading-aware chunking + BM25 keyword ranking with stemming (`snowballstemmer`) and query synonyms |
+| Frontend | Plain HTML, CSS and JavaScript, no build step |
+| Testing | pytest, FastAPI TestClient, a scripted fake LLM |
+| Deployment | Docker + docker-compose |
+
+---
+
+## Getting started
+
+### Requirements
+
+- Python 3.11 or newer
+- A Groq API key (free at [console.groq.com/keys](https://console.groq.com/keys))
+
+### Install
+
+```bash
+git clone https://github.com/MobiNomi/Multi-Agent-Customer-Support.git
+cd Multi-Agent-Customer-Support
+
+python -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### Configure
+
+```bash
+cp .env.example .env              # Windows: copy .env.example .env
+```
+
+Open `.env` and set your Groq key and a secret for signing sessions:
+
+```
+GROQ_API_KEY=gsk_your_key_here
+AUTH_SECRET=paste-a-long-random-string-here
+```
+
+Generate a secret with `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+
+### Check the connections
+
+```bash
+python -m scripts.check_connections
+```
+
+You should see `[ok]` lines for the database, sign-in, memory, knowledge base and Groq. Demo data is loaded automatically the first time the database is empty.
+
+### Run
 
 ```bash
 uvicorn app.main:app --reload
@@ -46,71 +169,182 @@ uvicorn app.main:app --reload
 - Chat page: http://127.0.0.1:8000
 - Interactive API docs: http://127.0.0.1:8000/docs
 
-## Chat page
-
-Open http://127.0.0.1:8000 and chat as a customer. Pick a demo customer at the top (Ali or Sara), then type, or click one of the suggested questions.
-
-- Each reply carries a colored tab for the desk that answered it: green Billing, violet Technical, teal General, amber Support team (human handoff).
-- Citations appear as chips inside the reply, and any ticket the agent opened is shown under it.
-- The **Behind this reply** panel shows the route: what the router decided and how confident it was, every tool the agent called with its arguments, and the help articles used. Click any earlier reply to see its route.
-- Conversations survive page reloads and server restarts. **Start new chat** begins a fresh one.
-- On phones the panel opens from the **Details** button.
-
-The page is plain HTML, CSS and JavaScript in `app/static/`, with no build step. Fonts are bundled (`app/static/fonts/`, SIL Open Font License), so it works offline. Set `DEMO_MODE=false` to hide the customer switcher; the page then takes the customer from `?customer=CUS-1001` in the URL until you add a real login.
+To chat in the terminal instead, with every routing decision and tool call printed:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "I was charged twice for order ORD-1034", "customer_id": "CUS-1001"}'
+python -m scripts.chat_cli --customer CUS-1001
 ```
 
-The reply includes a `session_id`. Send it back with the next message to continue the same conversation.
+---
+
+## Using the chat page
+
+1. Sign in, or choose **Create an account** to register with your own email (new accounts start on the Free plan). In demo mode the sign-in page also lists two demo accounts (Ali Khan and Sara Ahmed, password `demo1234`); click one to sign in.
+2. Click a suggested question or type your own. Press Enter to send, Shift+Enter for a new line.
+3. Read the reply:
+   - The **coloured tab** shows which desk answered: green Billing, violet Technical, teal General, amber Support team (human handoff).
+   - **Citation chips** show which document section each fact came from.
+   - Any **ticket** the agent opened is shown under the reply.
+4. The **Behind this reply** panel shows the router's decision and confidence, each tool call with its arguments, and the help articles used. Click any earlier reply to see its details.
+5. **Start new chat** begins a fresh conversation. Reloading the page keeps the current one, and you stay signed in.
+6. **Sign out** ends the session on this browser.
+
+On a phone, the details panel opens from the **Details** button.
+
+---
+
+## Accounts and sign-in
+
+![Sign-in page with the demo accounts](docs/sign-in.png)
+
+Customers create an account or sign in with their email and password. After that, the server knows who they are from a signed session token, so a request can't pretend to be another customer.
+
+### Creating an account
+
+Choose **Create an account** on the sign-in page and enter a name, email and password (twice).
+
+1. The browser sends them to `POST /api/v1/auth/register`.
+2. The server checks the rules:
+   - the name isn't empty;
+   - the email looks valid and has no account yet (capitals don't matter);
+   - the password has at least 8 characters, isn't a very common one and isn't the same as the email name.
+3. It stores the email and an Argon2 hash of the password. The password itself is never stored.
+4. It creates the customer with the next ID (`CUS-1003`, `CUS-1004`, and so on) on the Free plan, and signs them in straight away.
+
+Each IP address can create at most 5 accounts per hour (`REGISTRATIONS_PER_HOUR`); typos that fail the rules don't count. Set `REGISTRATION_ENABLED=false` to turn sign-up off.
+
+### Signing in
+
+1. The customer submits email and password to `POST /api/v1/auth/login`.
+2. The server checks the password against its stored Argon2 hash. Plain passwords are never stored.
+3. On success it creates a token saying which customer this is and when it expires (8 hours by default), signed with `AUTH_SECRET`.
+4. The token is set as an HttpOnly, SameSite cookie, so page scripts can't read it. API clients can send it instead as `Authorization: Bearer <token>`.
+5. Every chat and history request reads the customer from the token. A `customer_id` in a request body is ignored.
+
+Protections:
+
+| Protection | Detail |
+|---|---|
+| Password storage | Argon2 hashes with a unique salt per password |
+| Same answer for wrong email or wrong password | "Email or password is incorrect.", with equal response time, so the sign-in form doesn't reveal which emails have accounts |
+| Lockout | 5 wrong passwords lock the account for 15 minutes (`LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCK_MINUTES`) |
+| Expiry | Sessions expire after `ACCESS_TOKEN_MINUTES` |
+| Sign out everywhere | Setting a new password invalidates every existing session for that customer |
+| Tamper-proof tokens | A token that is edited, expired or signed with another secret is rejected |
+
+Customers created another way (for example, imported into the database) need a password before they can sign in. To set one, or to reset a forgotten password:
+
+```bash
+python -m scripts.set_password customer@example.com             # asks for the password
+python -m scripts.set_password customer@example.com --generate  # creates and prints a random one
+```
+
+When the app starts on a database created before sign-in existed, it adds the new columns automatically and keeps all existing data.
+
+---
+
+## API
+
+| Method | Endpoint | Sign-in needed | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/register` | No | Create an account (Free plan) and sign in |
+| `POST` | `/api/v1/auth/login` | No | Sign in; sets the session cookie and returns the token |
+| `POST` | `/api/v1/auth/logout` | No | Sign out (clears the cookie) |
+| `GET` | `/api/v1/auth/me` | Yes | The signed-in customer |
+| `POST` | `/api/v1/chat` | Yes | Send a message and get the reply |
+| `GET` | `/api/v1/sessions/{session_id}/messages` | Yes | Earlier messages of one of your conversations |
+| `GET` | `/api/v1/auth/options` | No | Whether sign-up is turned on |
+| `GET` | `/api/v1/demo/accounts` | No | Demo sign-ins (disabled when `DEMO_MODE=false`) |
+| `GET` | `/health` | No | Status of the database, LLM key, memory and knowledge base |
+| `GET` | `/` | No | The chat page |
+
+### Example
+
+Sign in, keeping the session cookie in a file, then chat:
+
+```bash
+curl -c cookies.txt -X POST http://127.0.0.1:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "ali@example.com", "password": "demo1234"}'
+
+curl -b cookies.txt -X POST http://127.0.0.1:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "I was charged twice for order ORD-1034"}'
+```
+
+Instead of the cookie, you can send the `access_token` from the sign-in reply as `-H "Authorization: Bearer <token>"`. On the `/docs` page, use the **Authorize** button.
+
+```json
+{
+  "response": "I checked ORD-1034: you were charged $149 twice. The second payment, TXN-8922, is a duplicate. I've opened a refund request... [Refund policy > Duplicate charges and billing errors]",
+  "session_id": "4f083e20df47...",
+  "assigned_agent": "billing_agent",
+  "intent": "billing",
+  "confidence": 0.9,
+  "needs_human": false,
+  "ticket_id": "TCK-3530D237",
+  "sources": ["Refund policy > Duplicate charges and billing errors"],
+  "tools_used": [
+    {"name": "get_order_payments", "args": {"order_id": "ORD-1034"}},
+    {"name": "search_knowledge_base", "args": {"query": "duplicate charge refund"}},
+    {"name": "create_support_ticket", "args": {"category": "Billing", "description": "Refund duplicate TXN-8922", "priority": "High"}}
+  ]
+}
+```
+
+Send the returned `session_id` with the next message to continue the same conversation. The exact wording of replies depends on the model.
 
 | Status | Meaning |
 |---|---|
-| 200 | Reply generated |
-| 404 | Unknown `customer_id` |
-| 422 | Invalid body (e.g. missing `customer_id`) |
-| 503 | `GROQ_API_KEY` not set |
+| 200 / 201 | Success (201 when an account is created) |
+| 401 | Not signed in, or the session expired. On sign-in: wrong email or password |
+| 403 | Sign-up is turned off |
+| 409 | On sign-up: an account with this email already exists |
+| 422 | Invalid request (for example, an empty message, a weak password or a badly formed email) |
+| 429 | Too many wrong passwords (account locked for a while), or too many sign-ups from one network |
+| 503 | `GROQ_API_KEY` is not set |
 
-Other endpoints:
+---
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | Database, LLM, memory and knowledge base status |
-| `GET /api/v1/sessions/{session_id}/messages?customer_id=...` | Earlier messages of a conversation (used to redraw the chat after a reload) |
-| `GET /api/v1/demo/customers` | Demo customer list for the switcher (off when `DEMO_MODE=false`) |
+## Knowledge base and RAG
 
-Each chat reply also returns `sources` (the document sections it cited) and `tools_used` (every tool call, in order).
-
-Terminal chat that shows routing and tool calls as they happen:
-
-```bash
-python -m scripts.chat_cli --customer CUS-1001                 # new conversation
-python -m scripts.chat_cli --customer CUS-1001 --session <id>  # resume a saved one
-```
-
-## Docker
-
-```bash
-docker compose up --build
-```
-
-The database and saved conversations live in the `support-data` volume, so they survive `docker compose down` and rebuilds. `docker compose down -v` deletes them.
-
-## How the knowledge base works
+The agents answer company questions from 11 markdown documents in [`knowledge/`](knowledge/), covering pricing, billing, refunds, cancellations, orders, account security, API errors, troubleshooting, privacy and an FAQ.
 
 ```
 knowledge/*.md  ->  load + clean  ->  chunk by heading  ->  BM25 index  ->  search_knowledge_base tool
                     documents.py     chunking.py           bm25.py         knowledge_base.py
 ```
 
-1. **Load.** Each file in `knowledge/` is read, its `title` and `category` taken from the header block at the top, and its whitespace cleaned.
-2. **Chunk.** Documents are cut at their headings, so each chunk covers one topic, e.g. `Refund policy > Annual plans`. A section longer than `CHUNK_MAX_CHARS` is split on paragraphs, then lines, then sentences, and each piece repeats the end of the previous one (`CHUNK_OVERLAP`) so no fact is cut in half. Every chunk starts with its `Title > Section` header so it makes sense on its own.
-3. **Index.** Chunks are indexed with BM25 keyword ranking. Words are stemmed (refunded, refunds and refund all match), heading words count double, and a small synonym list (`app/rag/synonyms.py`) adds the document's word when a customer uses a different one (yearly becomes annual).
-4. **Search.** The agent's query returns the top `RETRIEVAL_TOP_K` chunks. Weak matches under 20% of the best score are dropped.
+1. **Load.** Each file's title and category are read from its header block, and its whitespace is cleaned.
+2. **Chunk.** Documents are split at their headings, so each chunk covers one topic, for example `Refund policy > Annual plans`. Long sections are split further on paragraphs, lines, then sentences, with a small overlap so no fact is cut in half. Each chunk starts with its `Title > Section` header so it makes sense on its own. The 11 documents become 92 chunks.
+3. **Index.** Chunks are ranked with BM25:
+   - Words are stemmed, so *refunded*, *refunds* and *refund* all match.
+   - Words in headings count double.
+   - A small synonym list adds the document's word when a customer uses a different one (*yearly* becomes *annual*).
+4. **Search and answer.** The agent receives the top 4 chunks. It must answer only from them and cite the sections it used. When nothing matches, it says so and offers a human agent.
 
-To add or change company information, edit or add a `.md` file in `knowledge/` and restart the API. Start the file with:
+### Retrieval quality
+
+[`evals/retrieval.jsonl`](evals/retrieval.jsonl) holds 38 customer-style questions, each labelled with the sections that answer it.
+
+| Metric | Score |
+|---|---|
+| Correct section ranked first (hit@1) | 89% |
+| Correct section in the top 3 (hit@3) | 100% |
+| Mean reciprocal rank (MRR) | 0.94 |
+
+`tests/test_retrieval_eval.py` fails if a change lowers these scores. The questions were written alongside the documents, so expect lower numbers on real customer wording; add questions that fail as you find them.
+
+### Inspecting and editing the knowledge base
+
+```bash
+python -m scripts.knowledge stats                  # documents and chunk sizes
+python -m scripts.knowledge chunks refund-policy   # see how one document was chunked
+python -m scripts.knowledge search "money back"    # run a search like the agent does
+python -m scripts.knowledge eval                   # retrieval scores and every miss
+```
+
+To add information, create a `.md` file in `knowledge/` that starts with a header block, then restart the server:
 
 ```
 ---
@@ -120,100 +354,191 @@ updated: 2026-11-01
 ---
 ```
 
-Inspect and measure it:
-
-```bash
-python -m scripts.knowledge stats                  # documents and chunk sizes
-python -m scripts.knowledge chunks refund-policy   # see exactly how one file was chunked
-python -m scripts.knowledge search "money back"    # run a search like the agent does
-python -m scripts.knowledge eval                   # retrieval quality on evals/retrieval.jsonl
-```
-
-`evals/retrieval.jsonl` holds 38 customer-style questions, each with the sections that correctly answer it. Current scores: the right section is first for 89% of questions and in the top 3 for 100% (MRR 0.94). `tests/test_retrieval_eval.py` fails if a change makes these numbers drop. These questions were written alongside the documents, so real customer wording will score lower; add real questions that fail to the file as you find them.
-
-## Company documents
-
-| File | Covers |
-|---|---|
-| company-overview.md | What AcmeCloud is, contact channels, support hours, response times, ticket statuses |
-| plans-and-pricing.md | Free, Pro, Enterprise features and prices, add-ons, discounts |
-| billing-and-payments.md | Payment methods, billing cycle, invoices, failed payments, duplicate charges, taxes |
-| refund-policy.md | When refunds are given and how long they take |
-| plan-changes-and-cancellation.md | Upgrades, downgrades, cancelling, data after cancelling |
-| orders-and-licences.md | Order statuses, activation times, orders with several payments |
-| account-and-security.md | Password reset, lockout, 2FA, SSO, roles, account deletion |
-| api-guide.md | API keys, rate limits, every error code, webhooks |
-| troubleshooting.md | Login, slow app, sync, automations, uploads, maintenance |
-| privacy-and-data.md | What is stored, encryption, data region, export, deletion |
-| faq.md | Short answers to common questions |
-
-All of it is invented for the demo, and the domains use the reserved `.example` ending.
+---
 
 ## Demo data
 
-| Customer | Plan | Order | Notes |
-|---|---|---|---|
-| CUS-1001 Ali Khan | Pro | ORD-1034 ($149) | Charged twice: TXN-8921 and duplicate TXN-8922 |
-| CUS-1002 Sara Ahmed | Enterprise | ORD-1035 ($2,500) | Normal payment |
+| Customer | Sign-in | Plan | Order | Notes |
+|---|---|---|---|---|
+| `CUS-1001` Ali Khan | `ali@example.com` / `demo1234` | Pro | `ORD-1034` ($149) | Charged twice: `TXN-8921` and duplicate `TXN-8922` |
+| `CUS-1002` Sara Ahmed | `sara@example.com` / `demo1234` | Enterprise | `ORD-1035` ($2,500) | Order still processing |
 
-## Tests
+All company information, people and domains (`.example`) are invented.
+
+### Things to try
+
+| Message (signed in as Ali) | Expected behaviour |
+|---|---|
+| I was charged twice for ORD-1034 | Billing finds the duplicate payment, cites the refund policy and opens a ticket |
+| Can I get a refund on my yearly plan? | Answers "within 14 days" from the refund policy, with a citation |
+| My API keeps returning error 401 | Technical gives the documented troubleshooting steps |
+| What are your support hours? | General answers from the company overview |
+| Show me the payments for ORD-1035 | Refused: that order belongs to another customer |
+| I'd like to talk to a person | Opens an escalated ticket and gives the ticket number |
+| Do you support Kubernetes? | Says it doesn't have that information |
+
+---
+
+## Safety measures
+
+Enforced in code:
+
+- **Sign-in.** Every chat and history request needs a valid session; the customer comes from the signed token (see [Accounts and sign-in](#accounts-and-sign-in)).
+- **Customer scoping.** `customer_id` is hidden from the model's tool schema and injected by the server from the signed-in session. Order lookups also check ownership.
+- **Per-agent tool lists.** Each agent can only call its own tools; the tool executor enforces this.
+- **Loop protection.** An agent gets at most 4 rounds of tool calls per message (`MAX_TOOL_ROUNDS`). After that its tools are switched off and it must answer with what it has. Repeating an identical tool call within a message is blocked, and a hard limit stops each message after 20 graph steps (`MAX_GRAPH_STEPS`).
+- **Text cleaning.** Look-alike characters the model sometimes emits (non-breaking hyphens, narrow spaces) are converted to plain ones, so IDs like `ORD-1034` always match.
+- **Session isolation.** Conversations are stored per customer, so a leaked session ID can't open another customer's chat.
+- **Safe rendering.** The chat page escapes all model output before formatting it.
+- **No leaked errors.** Server errors return a generic message; details go to the server log.
+
+Set by the agents' instructions:
+
+- Answer company facts only from the knowledge base, cite sources, and say "I don't know" when nothing matches.
+- Never claim a refund has been paid; open a refund ticket instead.
+
+See [Limitations and roadmap](#limitations-and-roadmap) for what is not covered yet.
+
+---
+
+## Testing
 
 ```bash
-pytest            # offline: uses a fake LLM, no API key or network needed
-pytest -m live    # real Groq calls (needs GROQ_API_KEY)
+pytest              # 113 offline tests with a fake model: no API key or network needed
+pytest -m live      # 3 tests against the real Groq model (needs GROQ_API_KEY)
 ```
+
+| Test file | Covers |
+|---|---|
+| `test_auth.py` | Passwords, sign-up rules and limits, sign-in, lockout, expired, tampered and forged tokens, sign-out, password changes, database upgrade |
+| `test_connection.py` | Settings, database engine and sessions, foreign keys, missing-key errors |
+| `test_tools.py` | Database tools and customer scoping |
+| `test_graph.py` | Routing, tool loops, human handoff, memory across turns, loop protection |
+| `test_api.py` | Every endpoint, sessions, error codes, sources, the chat page files |
+| `test_memory.py` | Conversations surviving a server restart |
+| `test_rag.py` | Loading, chunking, BM25 and the search tool |
+| `test_retrieval_eval.py` | Retrieval quality gate |
+| `test_textnorm.py` | Cleaning of look-alike characters |
+| `test_live.py` | End-to-end turns with the real model |
+
+---
 
 ## Configuration
 
-All settings are in `.env.example`. The main ones:
+All settings are read from environment variables or `.env` (see [`.env.example`](.env.example)).
 
-| Variable | Default | |
+| Variable | Default | Description |
 |---|---|---|
 | `GROQ_API_KEY` | none | Required to chat |
 | `LLM_MODEL` | `openai/gpt-oss-20b` | Any Groq model with tool calling |
+| `LLM_TEMPERATURE` | `0.0` | Model temperature |
+| `LLM_TIMEOUT` / `LLM_MAX_RETRIES` | `30` / `2` | Request timeout (seconds) and retries |
 | `DATABASE_URL` | SQLite at `data/support_system.db` | Any SQLAlchemy URL |
-| `SEED_DEMO_DATA` | `true` | Load demo rows when the database is empty |
-| `MEMORY_BACKEND` | `sqlite` | `sqlite` keeps chats across restarts; `memory` keeps them in RAM only |
-| `MEMORY_DB_PATH` | `data/checkpoints.db` | Where saved conversations go |
-| `MAX_TOOL_ROUNDS` | `4` | Tool-call rounds per message before the agent must answer with what it has |
-| `MAX_GRAPH_STEPS` | `20` | Hard safety limit on graph steps per message |
-| `KNOWLEDGE_DIR` | `knowledge/` | Folder of company files |
+| `SEED_DEMO_DATA` | `true` | Load demo data when the database is empty |
+| `MEMORY_BACKEND` | `sqlite` | `sqlite` keeps conversations across restarts; `memory` keeps them in RAM only |
+| `MEMORY_DB_PATH` | `data/checkpoints.db` | Where conversations are saved |
+| `KNOWLEDGE_DIR` | `knowledge/` | Folder of company documents |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` | `1200` / `150` | Chunk size limit and overlap |
 | `RETRIEVAL_TOP_K` | `4` | Chunks returned per search |
-| `DEMO_MODE` | `true` | Show the demo customer switcher and its endpoint |
+| `MAX_TOOL_ROUNDS` | `4` | Tool-call rounds per message before the agent must answer |
+| `MAX_GRAPH_STEPS` | `20` | Hard limit on graph steps per message |
+| `AUTH_SECRET` | none | Secret that signs session tokens. Without it, everyone is signed out whenever the server restarts |
+| `ACCESS_TOKEN_MINUTES` | `480` | How long a sign-in lasts |
+| `LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCK_MINUTES` | `5` / `15` | Wrong passwords before lockout, and lockout length |
+| `COOKIE_SECURE` | `false` | Send the session cookie over HTTPS only (set `true` in production) |
+| `REGISTRATION_ENABLED` | `true` | Let new customers create an account |
+| `REGISTRATIONS_PER_HOUR` | `5` | New accounts allowed per IP address per hour |
+| `DEMO_MODE` | `true` | Give the demo accounts their demo password and list them on the sign-in page |
 | `CORS_ORIGINS` | none | Comma-separated origins allowed to call the API from another domain |
+| `SQL_ECHO` | `false` | Log every SQL statement |
 
-## Project layout
+Optional LangSmith tracing variables are listed in `.env.example`.
+
+---
+
+## Running with Docker
+
+```bash
+docker compose up --build
+```
+
+The app runs on http://localhost:8000 and reads its settings from `.env`. The database and saved conversations are kept in the `support-data` volume, so they survive `docker compose down` and rebuilds. `docker compose down -v` deletes them.
+
+---
+
+## Project structure
 
 ```
 app/
-  config.py            settings from env / .env
-  llm.py               lazy Groq client
-  memory.py            conversation memory (SQLite checkpointer)
-  main.py              FastAPI app (API + chat page)
-  static/              chat page: index.html, styles.css, app.js, fonts/
-  database/
-    connection.py      engine, session_scope, init_db, check_db
-    models.py          Customer, Order, Payment, SupportTicket
-    seed.py            demo data
-  rag/
-    documents.py       load + clean company files
-    chunking.py        heading-aware chunking with overlap
-    bm25.py            keyword ranking
-    synonyms.py        query expansion list
-    knowledge_base.py  index + search
-    evaluation.py      hit@k / MRR metrics
-  graph/
-    workflow.py        graph wiring, tool executor, escalation node
-    router.py          supervisor (structured output)
-    agents.py          specialist prompts and tool lists
-    history.py         conversation slicing helpers
-    state.py           SupportState
-  tools/
-    db_tools.py        database tools
-    knowledge_tools.py search_knowledge_base (RAG tool)
-knowledge/             company files (the RAG source)
-evals/                 retrieval test questions
-scripts/               check_connections, chat_cli, knowledge
-tests/                 offline suite + live tests
+├── main.py                 FastAPI app: chat endpoint, history, health, chat page
+├── config.py               settings from environment / .env
+├── llm.py                  Groq client, created on first use
+├── memory.py               conversation memory (SQLite checkpointer)
+├── textnorm.py             cleans look-alike characters in model output
+├── auth/
+│   ├── passwords.py        Argon2 password hashing
+│   ├── tokens.py           signed session tokens (JWT)
+│   ├── service.py          sign-up and sign-in rules, lockout, password changes
+│   ├── ratelimit.py        per-IP limit on sign-ups
+│   └── dependencies.py     reads the signed-in customer from each request
+├── database/
+│   ├── connection.py       engine, sessions, init and health check
+│   ├── migrations.py       adds new columns to older databases
+│   ├── models.py           Customer, Order, Payment, SupportTicket
+│   └── seed.py             demo data and demo sign-ins
+├── graph/
+│   ├── workflow.py         graph wiring, tool executor, human handoff
+│   ├── router.py           supervisor (structured output)
+│   ├── agents.py           specialist prompts, tool lists, tool-round cap
+│   ├── history.py          conversation helpers (replies, sources, tool calls)
+│   └── state.py            shared graph state
+├── rag/
+│   ├── documents.py        load and clean documents
+│   ├── chunking.py         heading-aware chunking with overlap
+│   ├── bm25.py             keyword ranking
+│   ├── synonyms.py         query expansion list
+│   ├── knowledge_base.py   index and search
+│   └── evaluation.py       hit@k and MRR
+├── tools/
+│   ├── db_tools.py         customer details, order payments, tickets
+│   └── knowledge_tools.py  search_knowledge_base
+└── static/                 chat page: index.html, styles.css, app.js, fonts/
+knowledge/                  company documents (the RAG source)
+evals/                      retrieval question set
+scripts/                    check_connections, chat_cli, knowledge, set_password
+tests/                      offline and live tests
+docs/                       screenshots
+Dockerfile, docker-compose.yml
 ```
+
+---
+
+## Limitations and roadmap
+
+Current limitations:
+
+- **No email checks.** Sign-up doesn't send a confirmation email, so someone could register an address that isn't theirs. Forgotten passwords are reset with `scripts/set_password.py`, not by email.
+- **Simple rate limits.** Wrong-password lockout is per account. The per-IP limit covers sign-ups only, and lives in the server's memory, so it resets on restart and isn't shared between several servers. Behind a proxy, every request appears to come from the proxy's IP address.
+- **No off-topic or prompt-injection filter.** Requests unrelated to AcmeCloud, or attempts to override the instructions, are not refused by a dedicated guard.
+- **No masking of sensitive data.** Card numbers or passwords typed into the chat are sent to the model and stored in the conversation history.
+- **No rate limiting**, and no limit on tickets per conversation.
+- **Keyword search only.** BM25 can miss questions phrased very differently from the documents. Embedding-based or hybrid search would handle this better.
+- **Small demo dataset:** two customers.
+
+Planned:
+
+- [ ] Guardrails: off-topic and prompt-injection handling, masking of sensitive data, rate limits, ticket limits, red-team tests
+- [x] Customer sign-in with hashed passwords, signed session tokens and lockout
+- [x] Self-service sign-up
+- [ ] Email confirmation and password reset by email
+- [ ] Hybrid retrieval (BM25 + embeddings) and a larger evaluation set
+- [ ] Fake data generator with hundreds of customers, orders and payments
+- [ ] Staff inbox for escalated tickets, with notifications
+- [ ] Streaming replies
+- [ ] Public deployment
+
+---
+
+## Credits
+
+The chat page uses the Instrument Sans and JetBrains Mono typefaces, bundled under the SIL Open Font License (licence files in `app/static/fonts/`).

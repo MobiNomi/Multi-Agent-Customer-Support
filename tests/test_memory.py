@@ -8,6 +8,7 @@ from app import config
 from app.graph.workflow import build_support_graph
 from app.main import app
 from app.memory import count_conversations, open_checkpointer
+from tests.helpers import sign_in
 
 
 def turn(text, customer="CUS-1001"):
@@ -42,12 +43,12 @@ def test_api_session_survives_server_restart(fake_llm):
     fake_llm.agent_replies = [AIMessage(content="Noted: ORD-1034."), AIMessage(content="Yes, ORD-1034.")]
 
     with TestClient(app) as client:              # server start #1
-        first = client.post("/api/v1/chat", json={"message": "my order is ORD-1034",
-                                                  "customer_id": "CUS-1001"}).json()
+        sign_in(client)
+        first = client.post("/api/v1/chat", json={"message": "my order is ORD-1034"}).json()
 
-    with TestClient(app) as client:              # server restart
+    with TestClient(app) as client:              # server restart (new browser, so sign in again)
+        sign_in(client)
         second = client.post("/api/v1/chat", json={"message": "which order did I mention?",
-                                                   "customer_id": "CUS-1001",
                                                    "session_id": first["session_id"]}).json()
 
     assert second["response"] == "Yes, ORD-1034."

@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -42,6 +43,13 @@ class Settings:
     chunk_overlap: int
     retrieval_top_k: int
     demo_mode: bool
+    auth_secret: Optional[str]
+    access_token_minutes: int
+    login_max_attempts: int
+    login_lock_minutes: int
+    cookie_secure: bool
+    registration_enabled: bool
+    registrations_per_hour: int
     cors_origins: tuple
 
 
@@ -65,5 +73,12 @@ def get_settings() -> Settings:
         chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "150")),
         retrieval_top_k=int(os.getenv("RETRIEVAL_TOP_K", "4")),
         demo_mode=_bool(os.getenv("DEMO_MODE"), True),
+        auth_secret=os.getenv("AUTH_SECRET") or None,
+        access_token_minutes=int(os.getenv("ACCESS_TOKEN_MINUTES", "480")),
+        login_max_attempts=int(os.getenv("LOGIN_MAX_ATTEMPTS", "5")),
+        login_lock_minutes=int(os.getenv("LOGIN_LOCK_MINUTES", "15")),
+        cookie_secure=_bool(os.getenv("COOKIE_SECURE"), False),
+        registration_enabled=_bool(os.getenv("REGISTRATION_ENABLED"), True),
+        registrations_per_hour=int(os.getenv("REGISTRATIONS_PER_HOUR", "5")),
         cors_origins=tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()),
     )

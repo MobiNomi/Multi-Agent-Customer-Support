@@ -5,6 +5,7 @@ import pytest
 from dotenv import dotenv_values
 
 from app.config import PROJECT_ROOT
+from tests.helpers import sign_in
 
 KEY = os.getenv("GROQ_API_KEY") or dotenv_values(PROJECT_ROOT / ".env").get("GROQ_API_KEY")
 pytestmark = [pytest.mark.live, pytest.mark.skipif(not KEY, reason="GROQ_API_KEY not set")]
@@ -30,8 +31,8 @@ def test_full_billing_turn(live_key):
     from fastapi.testclient import TestClient
     from app.main import app
     with TestClient(app) as client:
-        res = client.post("/api/v1/chat", json={"message": "I was charged twice for order ORD-1034",
-                                                "customer_id": "CUS-1001"})
+        sign_in(client)
+        res = client.post("/api/v1/chat", json={"message": "I was charged twice for order ORD-1034"})
     assert res.status_code == 200
     data = res.json()
     assert data["assigned_agent"] == "billing_agent"
@@ -42,8 +43,8 @@ def test_policy_question_is_grounded(live_key):
     from fastapi.testclient import TestClient
     from app.main import app
     with TestClient(app) as client:
-        res = client.post("/api/v1/chat", json={"message": "Can I get a refund on an annual plan I bought 5 days ago?",
-                                                "customer_id": "CUS-1001"})
+        sign_in(client)
+        res = client.post("/api/v1/chat", json={"message": "Can I get a refund on an annual plan I bought 5 days ago?"})
     data = res.json()
     assert res.status_code == 200
     assert any("Refund policy" in s for s in data["sources"]), data

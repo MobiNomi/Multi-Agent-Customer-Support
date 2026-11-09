@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Float, DateTime, ForeignKey
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -17,6 +17,14 @@ class Customer(Base):
     email = Column(String, nullable=False)
     plan = Column(String, default="Pro")    # Free, Pro, Enterprise
     created_at = Column(DateTime, default=utcnow)
+
+    # Login. Passwords are stored only as Argon2 hashes, never in plain text.
+    password_hash = Column(String, nullable=True)            # None = this customer can't sign in yet
+    role = Column(String, nullable=False, default="customer", server_default="customer")
+    failed_logins = Column(Integer, nullable=False, default=0, server_default="0")
+    locked_until = Column(DateTime, nullable=True)           # naive UTC
+    last_login_at = Column(DateTime, nullable=True)          # naive UTC
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")  # bump to sign out everywhere
 
     orders = relationship("Order", back_populates="customer")
     tickets = relationship("SupportTicket", back_populates="customer")

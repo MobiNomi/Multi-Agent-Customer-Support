@@ -21,6 +21,11 @@ def main() -> int:
         print(f"[ok]   database  {url}  ({customers} customers)")
         if customers == 0:
             print("       empty: run `python -m app.database.seed` or start the API with SEED_DEMO_DATA=true")
+        with session_scope() as s:
+            can_sign_in = s.query(Customer).filter(Customer.password_hash.isnot(None)).count()
+        secret = "AUTH_SECRET set" if settings.auth_secret else "AUTH_SECRET missing: everyone is signed out on restart"
+        tag = "[ok]  " if settings.auth_secret else "[warn]"
+        print(f"{tag} sign-in   {can_sign_in} of {customers} customers have a password; {secret}")
     else:
         ok = False
         print(f"[FAIL] database  {url}  unreachable")
