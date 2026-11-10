@@ -27,8 +27,8 @@ from app.auth.session import start_session
 from app.config import get_settings
 from app.database.connection import check_db, init_db, session_scope
 from app.database.models import Customer
-from app.database.seed import (DEMO_ACCOUNTS, DEMO_PASSWORD, DEMO_STAFF, ensure_demo_passwords, ensure_demo_staff,
-                               seed_if_empty)
+from app.database.seed import (DEMO_ACCOUNTS, DEMO_PASSWORD, DEMO_STAFF, ensure_demo_passwords, ensure_demo_payments,
+                               ensure_demo_staff, seed_if_empty)
 from app.graph.history import (current_turn_action_ids, current_turn_reply, current_turn_retrieved,
                                current_turn_sources, current_turn_tool_calls)
 from app.graph.workflow import build_support_graph
@@ -56,6 +56,8 @@ async def lifespan(app: FastAPI):
         logger.info("Demo accounts can now sign in with the demo password")
     if settings.demo_mode and ensure_demo_staff():
         logger.info("Added the demo staff account %s", DEMO_STAFF["email"])
+    if settings.demo_mode and ensure_demo_payments():
+        logger.info("Added new demo payments (Sara's duplicate charge on ORD-1035)")
     if not settings.auth_secret:
         logger.warning("AUTH_SECRET is not set: everyone is signed out whenever the server restarts. "
                        "Set AUTH_SECRET in .env.")

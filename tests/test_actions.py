@@ -101,7 +101,7 @@ def test_only_processing_orders_can_be_cancelled():
     assert "is Delivered, so it can't be cancelled" in delivered["error"]
     sara = cancel_order.invoke({"order_id": "ord-1035", "reason": "changed my mind", "customer_id": "CUS-1002"})
     assert sara["status"] == "needs_confirmation"
-    assert sara["summary"] == "Cancel order ORD-1035 ($2,500.00) and request a refund of $2,500.00"
+    assert sara["summary"] == "Cancel order ORD-1035 ($2,500.00) and request a refund of $5,000.00"   # both charges
     assert "refund then goes to the billing team" in sara["instructions"]
 
 
@@ -278,20 +278,26 @@ def test_order_cancellation_sends_the_refund_to_staff(client, fake_llm):
     action_id = data["actions"][0]["id"]
     res = client.post(f"/api/v1/actions/{action_id}/confirm").json()
     assert res["action"]["status"] == "completed"
-    assert "order ORD-1035 is cancelled" in res["updates"][0]["content"]
-    assert "$2,500.00 for payment TXN-9001 is now with our billing team" in res["updates"][0]["content"]
+    message = res["updates"][0]["content"]
+    assert "order ORD-1035 is cancelled" in message
+    assert ("Refunds of $2,500.00 for payment TXN-9001 and $2,500.00 for payment TXN-9002 are now with our "
+            "billing team") in message
     with session_scope() as s:
         assert s.get(Order, "ORD-1035").status == "Cancelled"
-        refund = s.query(PendingAction).filter_by(kind="refund", subject="TXN-9001").one()
-        assert (refund.status, refund.parent_id, refund.thread_id) == ("awaiting_staff", action_id,
-                                                                       f"CUS-1002:{data['session_id']}")
-        refund_id = refund.id
+        refunds = {r.subject: r for r in s.query(PendingAction).filter_by(kind="refund")}
+        assert set(refunds) == {"TXN-9001", "TXN-9002"}       # the real charge and the duplicate
+        for r in refunds.values():
+            assert (r.status, r.parent_id, r.thread_id) == ("awaiting_staff", action_id,
+                                                            f"CUS-1002:{data['session_id']}")
+        assert refunds["TXN-9002"].summary == "Refund $2,500.00 for duplicate payment TXN-9002 on cancelled order ORD-1035"
+        refund_ids = [refunds["TXN-9001"].id, refunds["TXN-9002"].id]
 
     staff_sign_in(client)
-    detail = client.get(f"/api/v1/staff/actions/{refund_id}").json()
+    detail = client.get(f"/api/v1/staff/actions/{refund_ids[0]}").json()
     assert detail["parent_summary"].startswith("Cancel order ORD-1035")
-    client.post(f"/api/v1/staff/actions/{refund_id}/approve", json={})
-    assert payment_status("TXN-9001") == "Refunded"
+    for refund_id in refund_ids:
+        client.post(f"/api/v1/staff/actions/{refund_id}/approve", json={})
+    assert payment_status("TXN-9001") == payment_status("TXN-9002") == "Refunded"
 
 
 def test_get_my_requests_reports_status(client, fake_llm):
@@ -440,3 +446,41 @@ def test_create_staff_script_makes_a_console_account(anon, capsys, monkeypatch):
     staff_sign_in(anon, "omar@acmecloud.example", password)
     monkeypatch.setattr(sys, "argv", ["create_staff", "omar@acmecloud.example", "Omar", "--generate"])
     assert create_staff.main() == 1
+
+
+# ---------- Sara's duplicate charge ----------
+
+def test_sara_has_a_duplicate_charge_she_can_get_refunded(client, fake_llm):
+    from app.tools.db_tools import get_order_payments
+    payments = get_order_payments.invoke({"order_id": "ORD-1035", "customer_id": "CUS-1002"})["payments"]
+    assert sorted((p["transaction_id"], p["status"]) for p in payments) == [("TXN-9001", "Successful"),
+                                                                            ("TXN-9002", "Duplicate")]
+    switch_to(client, SARA)
+    fake_llm.agent_replies = [
+        tool_call("get_order_payments", {"order_id": "ORD-1035"}),
+        tool_call("request_refund", {"transaction_id": "TXN-9002", "reason": "Charged twice"}, call_id="c2"),
+        AIMessage(content="TXN-9002 is a duplicate. Press Confirm below to send the refund request."),
+    ]
+    data = client.post("/api/v1/chat", json={"message": "I was charged twice for order ORD-1035"}).json()
+    action = data["actions"][0]
+    assert action["summary"] == "Refund $2,500.00 for duplicate payment TXN-9002 on order ORD-1035"
+    client.post(f"/api/v1/actions/{action['id']}/confirm")
+    staff_sign_in(client)
+    client.post(f"/api/v1/staff/actions/{action['id']}/approve", json={})
+    assert payment_status("TXN-9002") == "Refunded" and payment_status("TXN-9001") == "Successful"
+
+    # Cancelling the order afterwards only refunds what is left: the real charge.
+    result = cancel_order.invoke({"order_id": "ORD-1035", "customer_id": "CUS-1002"})
+    assert result["summary"] == "Cancel order ORD-1035 ($2,500.00) and request a refund of $2,500.00"
+
+
+def test_older_demo_database_gets_saras_duplicate_once():
+    from app.database.seed import ensure_demo_payments
+    with session_scope() as s:                       # as in a database seeded before it existed
+        s.delete(s.query(Payment).filter_by(transaction_id="TXN-9002").one())
+    assert ensure_demo_payments() == 1
+    assert ensure_demo_payments() == 0
+    assert payment_status("TXN-9002") == "Duplicate"
+    with session_scope() as s:                       # a refunded duplicate is left alone
+        s.query(Payment).filter_by(transaction_id="TXN-9002").one().status = "Refunded"
+    assert ensure_demo_payments() == 0 and payment_status("TXN-9002") == "Refunded"

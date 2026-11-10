@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 KIND_LABELS = {"refund": "Refund", "update_email": "Change sign-in email", "cancel_order": "Cancel order"}
 OPEN_STATUSES = ("awaiting_customer", "awaiting_staff")
+REFUNDABLE_PAYMENTS = ("Successful", "Duplicate")   # money actually taken; cancelling an order returns all of it
 STATUS_TEXT = {
     "awaiting_customer": "Waiting for you to confirm",
     "awaiting_staff": "With the billing team for approval",
@@ -124,6 +125,12 @@ def _open_action(session, customer_id: str, kind: str, subject: str, now) -> Opt
         if not _expire_if_due(a, now):
             return a
     return None
+
+
+def _refundable(session, order: Order, customer_id: str, now) -> List[Payment]:
+    """Payments on an order that would need refunding if it were cancelled (not already being refunded)."""
+    return [p for p in order.payments
+            if p.status in REFUNDABLE_PAYMENTS and _open_action(session, customer_id, "refund", p.transaction_id, now) is None]
 
 
 def _claim(session, action_id: str, from_status: str, to_status: str, **fields) -> bool:
@@ -239,7 +246,7 @@ def propose_order_cancellation(customer_id: str, thread_id: Optional[str], order
             existing.expires_at = now + _window()
             existing.thread_id = thread_id or existing.thread_id
             return _proposal(existing)
-        paid = [p for p in o.payments if p.status == "Successful"]
+        paid = _refundable(s, o, customer_id, now)
         total = sum(p.amount for p in paid)
         summary = f"Cancel order {oid} ({money(o.amount)})"
         if paid:
@@ -351,13 +358,12 @@ def _do_cancel(s, a: PendingAction, now) -> Tuple[str, str]:
         raise ExecutionFailed(f"order {oid} is now {o.status}, so it can no longer be cancelled.")
     o.status = "Cancelled"
     refunds = []
-    for p in o.payments:
-        if p.status != "Successful" or _open_action(s, a.customer_id, "refund", p.transaction_id, now):
-            continue
+    for p in _refundable(s, o, a.customer_id, now):
         r = PendingAction(
             id=_new_id(), customer_id=a.customer_id, thread_id=a.thread_id, kind="refund", subject=p.transaction_id,
-            status="awaiting_staff", summary=f"Refund {money(p.amount)} for payment {p.transaction_id} on "
-                                             f"cancelled order {oid}",
+            status="awaiting_staff", summary=f"Refund {money(p.amount)} for "
+                                             f"{'duplicate ' if p.status == 'Duplicate' else ''}payment "
+                                             f"{p.transaction_id} on cancelled order {oid}",
             reason=f"Order {oid} was cancelled by the customer.", amount=p.amount, requires_staff=True,
             parent_id=a.id, created_at=now, confirmed_at=now,
             payload=json.dumps({"transaction_id": p.transaction_id, "payment_id": p.id, "order_id": oid}),
@@ -369,8 +375,11 @@ def _do_cancel(s, a: PendingAction, now) -> Tuple[str, str]:
     if refunds:
         result += " Refund requests sent to billing: " + ", ".join(r.id for r in refunds) + "."
         amounts = " and ".join(f"{money(r.amount)} for payment {r.subject}" for r in refunds)
-        message += (f" A refund of {amounts} is now with our billing team for approval; they review "
-                    "requests within 1 business day.")
+        if len(refunds) == 1:
+            message += f" A refund of {amounts} is now with our billing team for approval;"
+        else:
+            message += f" Refunds of {amounts} are now with our billing team for approval;"
+        message += " they review requests within 1 business day."
     return result, message
 
 

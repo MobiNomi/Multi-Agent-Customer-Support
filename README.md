@@ -8,7 +8,7 @@ It is built for **AcmeCloud**, a fictional project-management software company, 
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-1C3C3C)
 ![Groq](https://img.shields.io/badge/LLM-Groq-F55036)
-![Tests](https://img.shields.io/badge/tests-208-2EA44F)
+![Tests](https://img.shields.io/badge/tests-210-2EA44F)
 
 ![Chat page with a Technical desk reply and the "Behind this reply" panel](docs/chat-page.png)
 
@@ -65,7 +65,7 @@ Main features:
 | Chat website | Desk tabs on each reply, citation chips, ticket numbers, and a panel that shows exactly how each reply was produced. |
 | Loop protection | Agents get a limited number of tool rounds per message and can't repeat identical calls. |
 | Measured retrieval | A set of 38 customer questions scores the search quality, and a test fails if it gets worse. |
-| Offline tests | 202 tests run with a fake model, including 31 red-team attack messages: no API key, no network, about 35 seconds. |
+| Offline tests | 204 tests run with a fake model, including 31 red-team attack messages: no API key, no network, about 35 seconds. |
 
 ---
 
@@ -270,7 +270,7 @@ The agents can do more than answer: they can propose changes to the customer's a
 | Request | Proposed when | After the customer confirms |
 |---|---|---|
 | Refund | A duplicate charge is found, or the customer asks for a refund of a payment | Goes to the staff console. A staff member approves (the payment becomes `Refunded`) or rejects it with a reason. |
-| Cancel order | The customer wants to cancel an order that is still `Processing` | The order is cancelled straight away. If it was paid, a refund request goes to the staff console automatically. |
+| Cancel order | The customer wants to cancel an order that is still `Processing` | The order is cancelled straight away. Every charge on it (including duplicates) gets a refund request in the staff console automatically. |
 | Change sign-in email | The customer asks to sign in with a different email | Changed straight away, after checking that no other account uses it. |
 
 How it works:
@@ -463,7 +463,7 @@ updated: 2026-11-01
 | Customer | Sign-in | Plan | Order | Notes |
 |---|---|---|---|---|
 | `CUS-1001` Ali Khan | `ali@example.com` / `demo1234` | Pro | `ORD-1034` ($149) | Charged twice: `TXN-8921` and duplicate `TXN-8922` |
-| `CUS-1002` Sara Ahmed | `sara@example.com` / `demo1234` | Enterprise | `ORD-1035` ($2,500) | Order still processing, so it can be cancelled |
+| `CUS-1002` Sara Ahmed | `sara@example.com` / `demo1234` | Enterprise | `ORD-1035` ($2,500) | Charged twice: `TXN-9001` and duplicate `TXN-9002`. Order still processing, so it can be cancelled |
 | `STF-1001` Hina Raza (staff) | `staff@acmecloud.example` / `demo1234` | Staff | | Signs in on the staff console at `/staff` |
 
 All company information, people and domains (`.example`) are invented.
@@ -475,7 +475,8 @@ All company information, people and domains (`.example`) are invented.
 | I was charged twice for ORD-1034 | Billing finds the duplicate payment, cites the refund policy and shows a refund card. Confirm it, then approve it in the staff console, and watch the support team's message arrive in the chat |
 | Did my refund go through? | Checks your requests and says where the refund stands |
 | Please change my email to ali.new@example.com | Shows an email-change card; after Confirm you sign in with the new email |
-| Please cancel my order ORD-1035 *(signed in as Sara)* | Shows a cancellation card; after Confirm the order is cancelled and the $2,500 refund goes to the staff console |
+| I was charged twice for ORD-1035 *(signed in as Sara)* | Billing finds Sara's duplicate `TXN-9002` and shows a $2,500 refund card |
+| Please cancel my order ORD-1035 *(signed in as Sara)* | Shows a cancellation card; after Confirm the order is cancelled and refunds for both charges ($5,000 in total) go to the staff console |
 | Can I get a refund on my yearly plan? | Answers "within 14 days" from the refund policy, with a citation |
 | My API keeps returning error 401 | Technical gives the documented troubleshooting steps |
 | What are your support hours? | General answers from the company overview |
@@ -539,7 +540,7 @@ See [Limitations and roadmap](#limitations-and-roadmap) for what is not covered 
 ## Testing
 
 ```bash
-pytest              # 202 offline tests with a fake model: no API key or network needed
+pytest              # 204 offline tests with a fake model: no API key or network needed
 pytest -m live      # 6 tests against the real Groq model (needs GROQ_API_KEY)
 ```
 

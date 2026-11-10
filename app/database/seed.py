@@ -35,6 +35,9 @@ def _demo_rows():
                 status="Duplicate", transaction_id="TXN-8922"),
         Payment(id="PAY-5003", customer_id="CUS-1002", order_id="ORD-1035", amount=2500.00,
                 status="Successful", transaction_id="TXN-9001"),
+        # Sara was charged twice too, so the refund demo works on the Enterprise account as well.
+        Payment(id="PAY-5004", customer_id="CUS-1002", order_id="ORD-1035", amount=2500.00,
+                status="Duplicate", transaction_id="TXN-9002"),
         SupportTicket(id="TCK-9001", customer_id="CUS-1001", category="Billing", priority="High",
                       status="Open", description="Duplicate charge on ORD-1034",
                       created_at=utcnow() - timedelta(days=3)),   # older than the ticket guard's 1-hour window
@@ -81,6 +84,34 @@ def ensure_demo_staff() -> bool:
         session.add(Customer(id=DEMO_STAFF["id"], name=DEMO_STAFF["name"], email=DEMO_STAFF["email"],
                              plan="Staff", role="staff", password_hash=_demo_password_hash()))
         return True
+
+
+# Demo payments added after the first release. Older demo databases get them on startup (demo mode only).
+LATER_DEMO_PAYMENTS = (
+    dict(id="PAY-5004", customer_id="CUS-1002", order_id="ORD-1035", amount=2500.00,
+         status="Duplicate", transaction_id="TXN-9002"),
+)
+
+
+def ensure_demo_payments() -> int:
+    """Add demo payments missing from an older demo database. Returns how many were added.
+
+    Only touches the demo customer's own demo order, and never re-adds a payment that exists
+    (so a duplicate that was already refunded stays refunded).
+    """
+    added = 0
+    with session_scope() as session:
+        for row in LATER_DEMO_PAYMENTS:
+            order = session.get(Order, row["order_id"])
+            if order is None or order.customer_id != row["customer_id"]:
+                continue
+            if session.get(Payment, row["id"]) is not None:
+                continue
+            if session.query(Payment).filter_by(transaction_id=row["transaction_id"]).first() is not None:
+                continue
+            session.add(Payment(**row))
+            added += 1
+    return added
 
 
 if __name__ == "__main__":
