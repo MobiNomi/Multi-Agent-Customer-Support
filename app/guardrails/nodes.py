@@ -6,11 +6,11 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.config import get_settings
-from app.graph.history import current_turn_retrieved, latest_user_text
+from app.graph.history import current_turn_proposed_action, current_turn_retrieved, latest_user_text
 from app.graph.state import SupportState
 from app.guardrails.injection import detect_injection
 from app.guardrails.notes import note, record
-from app.guardrails.output import OutputGuard
+from app.guardrails.output import REFUND_DONE, OutputGuard
 from app.textnorm import normalize_text
 
 INJECTION_REPLY = ("I can only help with questions about AcmeCloud and your account, and I can't change how I "
@@ -35,6 +35,16 @@ def output_guard() -> OutputGuard:
     from app.graph.agents import COMMON_RULES, FINAL_ANSWER_RULE, PROMPTS
     from app.graph.router import ROUTER_PROMPT
     return OutputGuard(list(PROMPTS.values()) + [COMMON_RULES, FINAL_ANSWER_RULE, ROUTER_PROMPT])
+
+
+def _has_completed_refund(customer_id: Optional[str]) -> bool:
+    if not customer_id:
+        return False
+    from app.database.connection import session_scope
+    from app.database.models import PendingAction
+    with session_scope() as session:
+        return session.query(PendingAction).filter_by(customer_id=customer_id, kind="refund",
+                                                      status="completed").first() is not None
 
 
 def input_guard_node(state: SupportState, config: RunnableConfig = None) -> dict:
@@ -79,7 +89,13 @@ def output_guard_node(state: SupportState, config: RunnableConfig = None) -> dic
     last = messages[-1] if messages else None
     if not isinstance(last, AIMessage) or not last.content:
         return {}
-    reply, kinds = output_guard().check(normalize_text(str(last.content)), current_turn_retrieved(messages))
+    text = normalize_text(str(last.content))
+    proposed = current_turn_proposed_action(messages)
+    # "Your refund was approved" is fine once staff really have approved one; only then ask the database.
+    refund_completed = (not proposed and any(p.search(text) for p in REFUND_DONE)
+                        and _has_completed_refund(state.get("customer_id")))
+    reply, kinds = output_guard().check(text, current_turn_retrieved(messages), proposed_action=proposed,
+                                        refund_completed=refund_completed)
     if not kinds:
         return {}
     record(kinds, state.get("customer_id"), _thread(config))

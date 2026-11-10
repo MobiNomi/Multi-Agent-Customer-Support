@@ -93,7 +93,7 @@ def test_reply_built_only_on_fake_citations_is_replaced(guard):
 ])
 def test_false_refund_promises_are_rewritten(guard, claim):
     reply, kinds = guard.check(f"I checked your order. {claim} Anything else?", [])
-    assert "passed your refund request to the billing team" in reply and kinds == ["promise_rewritten"]
+    assert "only after our billing team approves them" in reply and kinds == ["promise_rewritten"]
     assert reply.startswith("I checked your order.") and reply.endswith("Anything else?")
 
 

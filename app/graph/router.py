@@ -22,9 +22,11 @@ INTENT_TO_AGENT = {
 ROUTER_PROMPT = (
     "You are the intent classifier for a customer support system.\n"
     "Classify the customer's LATEST message into exactly one intent:\n"
-    "- billing: subscriptions, charges, duplicate charges, refunds, invoices, failed payments.\n"
+    "- billing: subscriptions, charges, duplicate charges, refunds, invoices, failed payments, orders and "
+    "cancelling an order, and the status of a refund request.\n"
     "- technical: bugs, API errors, configuration, login or performance problems.\n"
-    "- general: opening hours, policies, plan features, greetings, anything else.\n"
+    "- general: opening hours, policies, plan features, changing account details such as the sign-in "
+    "email, greetings, anything else.\n"
     "- escalate: asks for a human, threatens legal action, or is extremely angry.\n"
     "- off_topic: has nothing to do with AcmeCloud or the customer's account, e.g. homework, essays, coding "
     "tasks unrelated to the AcmeCloud API, general trivia, other companies' products.\n"

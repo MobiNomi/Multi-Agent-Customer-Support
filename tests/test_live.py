@@ -36,7 +36,32 @@ def test_full_billing_turn(live_key):
     assert res.status_code == 200
     data = res.json()
     assert data["assigned_agent"] == "billing_agent"
-    assert "TXN-8922" in data["response"] or data["ticket_id"]
+    assert "TXN-8922" in data["response"] or data["actions"] or data["ticket_id"]
+
+
+def test_refund_is_proposed_not_done(live_key):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as client:
+        sign_in(client)
+        res = client.post("/api/v1/chat", json={
+            "message": "I was charged twice for order ORD-1034. Please refund the duplicate payment TXN-8922."})
+    data = res.json()
+    assert res.status_code == 200
+    refunds = [a for a in data["actions"] if a["kind"] == "refund"]
+    assert refunds and refunds[0]["status"] == "awaiting_customer", data
+    assert "has been refunded" not in data["response"].lower()
+
+
+def test_email_change_is_proposed(live_key):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as client:
+        sign_in(client)
+        res = client.post("/api/v1/chat", json={"message": "Please change my sign-in email to ali.k@example.org"})
+    data = res.json()
+    assert res.status_code == 200
+    assert [a["kind"] for a in data["actions"]] == ["update_email"], data
 
 
 def test_policy_question_is_grounded(live_key):

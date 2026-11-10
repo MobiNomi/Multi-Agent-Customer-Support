@@ -31,6 +31,7 @@
     emailError: $("email-error"), passwordError: $("password-error"), loginError: $("login-error"),
     loginNotice: $("login-notice"), loginSubmit: $("login-submit"),
     demoAccounts: $("demo-accounts"), demoList: $("demo-list"), demoPassword: $("demo-password"),
+    demoStaff: $("demo-staff"),
     signinPanel: $("signin-panel"), signupPanel: $("signup-panel"), toSignupLine: $("to-signup-line"),
     toSignup: $("to-signup"), toSignin: $("to-signin"), signupForm: $("signup-form"),
     suName: $("su-name"), suEmail: $("su-email"), suPassword: $("su-password"), suConfirm: $("su-confirm"),
@@ -40,7 +41,11 @@
     newChat: $("new-chat"), toggle: $("toggle-panel"), closePanel: $("close-panel"),
     panelBody: $("panel-body"),
   };
-  const state = { account: null, customerId: null, sessionId: null, busy: false, demoLoaded: false, optionsLoaded: false };
+  const state = {
+    account: null, customerId: null, sessionId: null, busy: false, demoLoaded: false, optionsLoaded: false,
+    lastUpdateId: 0, seenUpdates: new Set(), cards: new Map(), pollTimer: null, polling: false,
+  };
+  const POLL_MS = 8000;   // how often an open chat checks for support-team messages
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const narrow = window.matchMedia("(max-width: 900px)");
 
@@ -184,6 +189,7 @@
     const meta = buildMeta(data);
     if (meta) bubble.append(meta);
     article.append(bubble);
+    for (const action of data.actions || []) article.append(actionCard(action));
     if (data.assigned_agent) {   // replies with routing details can be opened in the panel
       replyData.set(article, data);
       article.classList.add("has-details");
@@ -246,6 +252,176 @@
     scrollDown();
   }
 
+  // ---------- requests that need the customer's OK ----------
+  // The assistant only proposes changes. Nothing happens until the customer presses Confirm here;
+  // refunds then wait for a staff member's approval, and the outcome arrives as a support message.
+
+  const CONFIRM_LABELS = { refund: "Confirm refund request", update_email: "Confirm email change", cancel_order: "Confirm cancellation" };
+  const UPDATE_TONES = { action_submitted: "wait", action_completed: "done", action_cancelled: "off", action_failed: "stop" };
+
+  function money(n) {
+    return n == null ? "" : n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  }
+
+  function cardStatus(a) {
+    switch (a.status) {
+      case "awaiting_customer":
+        return ["ask", a.requires_staff
+          ? "Nothing happens until you confirm. Our billing team then reviews it, usually within 1 business day."
+          : "Nothing changes until you confirm."];
+      case "awaiting_staff": return ["wait", "Confirmed. Waiting for the billing team's approval."];
+      case "processing": return ["wait", "Being processed."];
+      case "completed": return ["done", a.kind === "refund" ? "Approved by the billing team." : "Done."];
+      case "rejected": return ["stop", `Declined by the support team${a.resolution_note ? `: ${a.resolution_note}` : "."}`];
+      case "cancelled": return ["off", a.resolution_note || "Cancelled. Nothing was changed."];
+      case "expired": return ["off", "Expired before it was confirmed. Ask again if you still need it."];
+      case "failed": return ["stop", `Couldn't be completed${a.result ? `: ${a.result}` : "."}`];
+      default: return ["off", a.status_text || a.status];
+    }
+  }
+
+  function actionCard(action) {
+    const card = el("section", "action-card");
+    card.dataset.actionId = action.id;
+    if (!state.cards.has(action.id)) state.cards.set(action.id, new Set());
+    state.cards.get(action.id).add(card);
+    renderCard(card, action);
+    return card;
+  }
+
+  function renderCard(card, a) {
+    const [tone, text] = cardStatus(a);
+    card.className = `action-card tone-${tone}`;
+    card.setAttribute("aria-label", `${a.kind_label}: ${a.status_text}`);
+    const head = el("div", "action-head");
+    head.append(el("span", "action-kind", a.kind_label), el("span", "action-id", a.id));
+    const summary = el("p", "action-summary", a.summary);
+    const status = el("p", "action-status", text);
+    status.setAttribute("role", "status");
+    const error = el("p", "action-error");
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+    card.replaceChildren(head, summary, status);
+
+    if (a.status === "awaiting_customer") {
+      const row = el("div", "action-buttons");
+      const yes = el("button", "btn-confirm", CONFIRM_LABELS[a.kind] || "Confirm");
+      const no = el("button", "btn-quiet", "Not now");
+      yes.type = no.type = "button";
+      yes.addEventListener("click", () => decide(a, "confirm", card));
+      no.addEventListener("click", () => decide(a, "cancel", card));
+      row.append(yes, no);
+      card.append(row);
+    } else if (a.status === "awaiting_staff") {
+      const withdraw = el("button", "link-button action-withdraw", "Withdraw request");
+      withdraw.type = "button";
+      withdraw.addEventListener("click", () => decide(a, "cancel", card));
+      card.append(withdraw);
+    }
+    card.append(error);
+  }
+
+  function updateCards(action) {
+    for (const card of state.cards.get(action.id) || []) {
+      if (card.classList.contains("is-busy")) continue;
+      const before = card.querySelector(".action-status")?.textContent;
+      renderCard(card, action);
+      if (before && before !== card.querySelector(".action-status").textContent) card.classList.add("just-changed");
+    }
+  }
+
+  async function decide(action, verb, card) {
+    if (card.classList.contains("is-busy")) return;
+    card.classList.add("is-busy");
+    for (const b of card.querySelectorAll("button")) b.disabled = true;
+    const error = card.querySelector(".action-error");
+    try {
+      const res = await fetch(`${API}/api/v1/actions/${encodeURIComponent(action.id)}/${verb}`, { method: "POST" });
+      if (res.status === 401) { showLogin("Your session has ended. Sign in again to continue."); return; }
+      let data = null;
+      try { data = await res.json(); } catch { /* ignore */ }
+      card.classList.remove("is-busy");
+      if (res.ok) {
+        updateCards(data.action);
+        for (const u of data.updates || []) addSupportUpdate(u);
+        return;
+      }
+      // 409 or 410: it changed meanwhile (expired, already decided). Show why, then where it stands now.
+      const why = (data && data.detail) || "That didn't work. Try again in a moment.";
+      await refreshAction(action.id);
+      const fresh = card.querySelector(".action-error");
+      fresh.textContent = why;
+      fresh.hidden = false;
+    } catch {
+      card.classList.remove("is-busy");
+      for (const b of card.querySelectorAll("button")) b.disabled = false;
+      error.textContent = "Can't reach the server. Check that it's running, then try again.";
+      error.hidden = false;
+    }
+  }
+
+  async function refreshAction(id) {
+    try {
+      const res = await fetch(`${API}/api/v1/actions/${encodeURIComponent(id)}`);
+      if (res.ok) updateCards(await res.json());
+    } catch { /* keep what is shown */ }
+  }
+
+  // Messages from the support team (staff decisions and replies) and automatic account updates.
+  function addSupportUpdate(u, { isNew = true } = {}) {
+    if (u.id != null) {
+      if (state.seenUpdates.has(u.id)) return;
+      state.seenUpdates.add(u.id);
+      state.lastUpdateId = Math.max(state.lastUpdateId, u.id);
+    }
+    const empty = els.log.querySelector(".empty");
+    if (empty) empty.remove();
+    if (u.author) {
+      const first = u.author.split(" ")[0];
+      const article = el("article", `msg msg-bot msg-support desk-human${isNew ? " is-new" : ""}`);
+      article.setAttribute("aria-label", `Message from ${u.author} of the support team`);
+      article.append(el("div", "desk-tab", `Support team · ${first}`));
+      const bubble = el("div", "bubble");
+      const body = el("div", "msg-text");
+      body.innerHTML = renderMarkdown(u.content || "");
+      bubble.append(body);
+      article.append(bubble);
+      els.log.append(article);
+    } else {
+      const line = el("div", `event-line tone-${UPDATE_TONES[u.kind] || "off"}${isNew ? " is-new" : ""}`);
+      line.append(el("span", "event-mark"), el("p", null, u.content));
+      els.log.append(line);
+    }
+    scrollDown();
+  }
+
+  async function poll() {
+    if (!state.sessionId || !state.account || state.busy || state.polling) return;
+    if (document.visibilityState !== "visible") return;
+    state.polling = true;
+    const sid = state.sessionId;
+    try {
+      const res = await fetch(`${API}/api/v1/sessions/${encodeURIComponent(sid)}/updates?after=${state.lastUpdateId}`);
+      if (res.status === 401) { showLogin("Your session has ended. Sign in again to continue."); return; }
+      if (!res.ok || sid !== state.sessionId) return;
+      const data = await res.json();
+      for (const a of data.actions) updateCards(a);
+      for (const u of data.updates) addSupportUpdate(u);
+    } catch { /* try again next time */ } finally {
+      state.polling = false;
+    }
+  }
+
+  function startPolling() {
+    stopPolling();
+    state.pollTimer = setInterval(poll, POLL_MS);
+  }
+
+  function stopPolling() {
+    if (state.pollTimer) clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+
   // ---------- details panel ----------
 
   function describeTool(call) {
@@ -255,6 +431,10 @@
       case "get_order_payments": return `Checked the payments on ${a.order_id || "an order"}`;
       case "get_customer_details": return "Looked up the customer's account, orders and tickets";
       case "create_support_ticket": return `Opened a ${a.priority ? `${a.priority.toLowerCase()}-priority ` : ""}${a.category || "support"} ticket`;
+      case "request_refund": return `Prepared a refund request for ${a.transaction_id || "a payment"}, for the customer to confirm`;
+      case "update_email": return `Prepared a change of sign-in email, for the customer to confirm`;
+      case "cancel_order": return `Prepared the cancellation of ${a.order_id || "an order"}, for the customer to confirm`;
+      case "get_my_requests": return "Checked the customer's earlier requests";
       default: return `Used ${call.name}`;
     }
   }
@@ -355,7 +535,7 @@
     const list = [];
     if (customer && customer.orders.length) list.push(`I was charged twice for order ${customer.orders[0]}`);
     list.push("Can I get a refund on my yearly plan?", "My API keeps returning error 401",
-              "What are your support hours?", "I'd like to talk to a person");
+              "I want to change the email I sign in with", "I'd like to talk to a person");
     return list;
   }
 
@@ -379,6 +559,9 @@
 
   async function openConversation() {
     els.log.replaceChildren();
+    state.lastUpdateId = 0;
+    state.seenUpdates = new Set();
+    state.cards = new Map();
     showPanelMessage("Send a message to see which desk answered, what it checked and which help articles it used.");
     state.sessionId = store.get(sessionKey(state.customerId));
     if (state.sessionId) {
@@ -393,10 +576,16 @@
             let last = null;
             for (const m of data.messages) {
               if (m.role === "customer") { addCustomerMessage(m.content); continue; }
+              if (m.role === "support") {
+                addSupportUpdate({ id: m.update_id, kind: m.kind, author: m.author, content: m.content }, { isNew: false });
+                continue;
+              }
               const details = saved.find((d) => d.response === m.content);
-              const article = addBotMessage(details || { response: m.content }, { isNew: false });
+              // Request cards always come from the server, so they show the current status.
+              const article = addBotMessage({ ...(details || { response: m.content }), actions: m.actions || [] }, { isNew: false });
               if (details) last = article;
             }
+            state.lastUpdateId = Math.max(state.lastUpdateId, data.last_update_id || 0);
             if (last) selectReply(last);
             else showPanelMessage("Details for these replies aren't saved in this browser. They appear for new messages.");
             return;
@@ -464,9 +653,11 @@
     els.chatActions.hidden = false;
     document.body.classList.remove("is-loading");
     openConversation().then(() => els.input.focus());
+    startPolling();
   }
 
   function showLogin(notice) {
+    stopPolling();
     state.account = null;
     state.customerId = null;
     state.sessionId = null;
@@ -538,7 +729,7 @@
       let data = null;
       try { data = await res.json(); } catch { /* ignore */ }
       if (res.ok) { showChat(data.customer); return; }
-      els.loginError.textContent = res.status === 401 || res.status === 429
+      els.loginError.textContent = res.status === 401 || res.status === 403 || res.status === 429
         ? (data && data.detail) || "Email or password is incorrect."
         : "Sign-in failed on the server. Try again in a moment.";
       els.loginError.hidden = false;
@@ -558,7 +749,9 @@
     try {
       const res = await fetch(`${API}/api/v1/demo/accounts`);
       if (!res.ok) return;                 // demo mode is off
-      const accounts = await res.json();
+      const all = await res.json();
+      const accounts = all.filter((a) => a.role !== "staff");   // staff sign in on the console at /staff
+      els.demoStaff.hidden = !all.some((a) => a.role === "staff");
       if (!accounts.length) return;
       els.demoPassword.textContent = accounts[0].password;
       for (const a of accounts) {
@@ -726,6 +919,7 @@
     els.input.focus();
   });
 
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });
   narrow.addEventListener("change", () => setPanel(!narrow.matches));
   els.toggle.addEventListener("click", () => setPanel(!document.body.classList.contains("panel-open")));
   els.closePanel.addEventListener("click", () => setPanel(false));

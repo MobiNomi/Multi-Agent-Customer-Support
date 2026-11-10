@@ -160,3 +160,24 @@ def register_customer(name: str, email: str, password: str) -> Tuple[AuthUser, i
                 if _find_by_email(session, email) is not None:
                     raise EmailTaken()
     raise RuntimeError("Could not create the account. Try again.")
+
+
+# ---------- staff accounts ----------
+
+def _next_staff_id(session) -> str:
+    numbers = [int(sid[4:]) for (sid,) in session.query(Customer.id).filter(Customer.id.like("STF-%"))
+               if sid[4:].isdigit()]
+    return f"STF-{max(numbers, default=1000) + 1}"
+
+
+def create_staff(name: str, email: str, password: str) -> str:
+    """Create a staff account for the console at /staff. Returns its ID. Raises ValueError or EmailTaken."""
+    name, email = validate_registration(name, email, password)
+    password_hash = hash_password(password)
+    with session_scope() as session:
+        if _find_by_email(session, email) is not None:
+            raise EmailTaken()
+        staff_id = _next_staff_id(session)
+        session.add(Customer(id=staff_id, name=name, email=email, plan="Staff", role="staff",
+                             password_hash=password_hash))
+        return staff_id

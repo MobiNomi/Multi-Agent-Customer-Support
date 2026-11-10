@@ -13,8 +13,18 @@ REFUND_DONE = [
     re.compile(r"\b(?:I|we)(?:'ve| have)\s+(?:already\s+)?refunded\b", re.I),
     re.compile(r"\byou(?:'ve| have) been refunded\b", re.I),
 ]
-SAFE_REFUND_SENTENCE = ("I've passed your refund request to the billing team; they review requests within "
-                        "1 business day.")
+SAFE_REFUND_SENTENCE = ("Refunds are issued only after our billing team approves them, which usually takes "
+                        "up to 1 business day.")
+# Said instead of "it's done" in a reply that has just proposed an action the customer hasn't confirmed.
+CONFIRM_FIRST_SENTENCE = "Nothing has changed yet: press Confirm below if you want to go ahead."
+ACTION_DONE = [
+    re.compile(r"\b(?:e-?mail|address)\b[^.!?\n]{0,60}?\b(?:has|have) been\s+(?:successfully\s+)?"
+               r"(?:changed|updated)\b", re.I),
+    re.compile(r"\border\b[^.!?\n]{0,40}?\b(?:has|have) been\s+(?:successfully\s+)?cancel+ed\b", re.I),
+    re.compile(r"\b(?:I|we)(?:'ve| have)\s+(?:successfully\s+)?(?:changed|updated|cancel+ed)\s+(?:your|the)\b", re.I),
+    re.compile(r"\b(?:refund|request)\b[^.!?\n]{0,40}?\b(?:has|have) been\s+(?:submitted|sent|filed|"
+               r"forwarded|passed)\b", re.I),
+]
 UNSUPPORTED_REPLY = ("I couldn't confirm that from our help articles. Would you like me to connect you with "
                      "a human agent?")
 LEAK_REPLY = ("I can't share details about how I'm set up, but I'm happy to help with any question about "
@@ -25,6 +35,10 @@ INTERNAL_NAMES = {
     "get_order_payments": "your payment records",
     "get_customer_details": "your account details",
     "create_support_ticket": "a support ticket",
+    "request_refund": "a refund request",
+    "cancel_order": "an order cancellation",
+    "update_email": "an email change",
+    "get_my_requests": "your requests",
     "tool_executor": "our systems",
 }
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
@@ -45,8 +59,14 @@ class OutputGuard:
         low = reply.lower()
         return any(m in low for m in LEAK_MARKERS) or bool(_shingles(reply) & self.secret_shingles)
 
-    def check(self, reply: str, retrieved_sources: List[str]) -> Tuple[str, List[str]]:
-        """Return (safe reply, kinds of fixes applied)."""
+    def check(self, reply: str, retrieved_sources: List[str], proposed_action: bool = False,
+              refund_completed: bool = False) -> Tuple[str, List[str]]:
+        """Return (safe reply, kinds of fixes applied).
+
+        proposed_action: this reply has just proposed an action the customer hasn't confirmed yet, so any
+        "it's done" claim is false. refund_completed: staff really have approved a refund for this
+        customer, so saying a refund was approved is allowed.
+        """
         kinds: List[str] = []
         if self.leaks_prompt(reply):
             return LEAK_REPLY, ["leak_blocked"]
@@ -66,13 +86,16 @@ class OutputGuard:
                 kept.append(CITATION.sub(lambda m: m.group(0) if m.group(1).strip() in allowed else "", sentence))
         reply = " ".join(kept) if kept else UNSUPPORTED_REPLY
 
-        # The bot can only open refund requests; it must never say money was returned.
+        # The bot can only propose refunds; it must never say money was returned (unless staff approved it).
+        # Right after proposing an action, nothing has happened yet, so no "done" claim of any kind is true.
+        done_patterns = (REFUND_DONE + ACTION_DONE) if proposed_action else ([] if refund_completed else REFUND_DONE)
+        safe = CONFIRM_FIRST_SENTENCE if proposed_action else SAFE_REFUND_SENTENCE
         sentences = _SENTENCE.split(reply)
         fixed, replaced = [], False
         for sentence in sentences:
-            if any(p.search(sentence) for p in REFUND_DONE):
+            if any(p.search(sentence) for p in done_patterns):
                 if not replaced:
-                    fixed.append(SAFE_REFUND_SENTENCE)
+                    fixed.append(safe)
                 replaced = True
             else:
                 fixed.append(sentence)

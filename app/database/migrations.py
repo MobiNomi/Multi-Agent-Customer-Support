@@ -1,7 +1,7 @@
 """Small, explicit schema upgrades for databases created by older versions of the app.
 
 `create_all` creates missing tables but never adds columns to existing ones, so a database made
-before login existed would lack the login columns. This adds them in place, keeping all data.
+before a feature existed would lack its columns. This adds them in place, keeping all data.
 (For bigger schema changes, switch to Alembic.)
 """
 import logging
@@ -12,33 +12,48 @@ from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
-CUSTOMER_COLUMNS = {
-    "password_hash": "VARCHAR",
-    "role": "VARCHAR NOT NULL DEFAULT 'customer'",
-    "failed_logins": "INTEGER NOT NULL DEFAULT 0",
-    "locked_until": "TIMESTAMP",
-    "last_login_at": "TIMESTAMP",
-    "token_version": "INTEGER NOT NULL DEFAULT 0",
+# table -> {column: DDL}. Only ever add to this; never remove or rename.
+NEW_COLUMNS = {
+    "customers": {                       # sign-in (v1.5)
+        "password_hash": "VARCHAR",
+        "role": "VARCHAR NOT NULL DEFAULT 'customer'",
+        "failed_logins": "INTEGER NOT NULL DEFAULT 0",
+        "locked_until": "TIMESTAMP",
+        "last_login_at": "TIMESTAMP",
+        "token_version": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "tickets": {                         # staff console (v1.8)
+        "thread_id": "VARCHAR",
+        "closed_at": "TIMESTAMP",
+    },
 }
+CUSTOMER_COLUMNS = NEW_COLUMNS["customers"]
 
 
 def ensure_schema(engine: Engine) -> List[str]:
-    """Add any missing login columns and the unique email index. Returns the columns added."""
+    """Add any missing columns and indexes. Returns the columns added, as "table.column"."""
     insp = inspect(engine)
-    if "customers" not in insp.get_table_names():
-        return []
-    existing = {c["name"] for c in insp.get_columns("customers")}
+    tables = set(insp.get_table_names())
     added = []
     with engine.begin() as conn:
-        for name, ddl in CUSTOMER_COLUMNS.items():
-            if name not in existing:
-                conn.execute(text(f"ALTER TABLE customers ADD COLUMN {name} {ddl}"))
-                added.append(name)
-    try:
-        with engine.begin() as conn:  # one account per email address, ignoring upper/lower case
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_customers_email_lower ON customers (lower(email))"))
-    except Exception as exc:  # e.g. two customers already share an email
-        logger.warning("Could not create the unique email index: %s", exc)
+        for table, columns in NEW_COLUMNS.items():
+            if table not in tables:
+                continue
+            existing = {c["name"] for c in insp.get_columns(table)}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                    added.append(f"{table}.{name}")
+    if "customers" in tables:
+        try:
+            with engine.begin() as conn:  # one account per email address, ignoring upper/lower case
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_customers_email_lower "
+                                  "ON customers (lower(email))"))
+        except Exception as exc:  # e.g. two customers already share an email
+            logger.warning("Could not create the unique email index: %s", exc)
+    if "tickets" in tables:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tickets_thread_id ON tickets (thread_id)"))
     if added:
-        logger.info("Upgraded the customers table: added %s", ", ".join(added))
+        logger.info("Upgraded the database: added %s", ", ".join(added))
     return added

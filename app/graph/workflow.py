@@ -24,9 +24,11 @@ AGENT_NODES = ("billing_agent", "technical_agent", "general_agent")
 AgentName = Literal["billing_agent", "technical_agent", "general_agent"]
 
 TOOL_REGISTRY = {t.name: t for tools in AGENT_TOOLS.values() for t in tools}
-# Tools that take the customer's ID; the executor injects it from the session.
-CUSTOMER_SCOPED = {name for name, t in TOOL_REGISTRY.items()
-                   if "customer_id" in inspect.signature(t.func).parameters}
+# Arguments the executor fills in from the signed-in session, never from the model.
+INJECTED_ARGS = ("customer_id", "thread_id")
+TOOL_INJECTIONS = {name: [a for a in INJECTED_ARGS if a in inspect.signature(t.func).parameters]
+                   for name, t in TOOL_REGISTRY.items()}
+CUSTOMER_SCOPED = {name for name, args in TOOL_INJECTIONS.items() if "customer_id" in args}
 
 
 def _call_key(name: str, args: dict) -> str:
@@ -88,8 +90,9 @@ def tool_execution_node(state: SupportState, config: RunnableConfig = None) -> d
             if blocked is not None:
                 result = blocked
             else:
-                if name in CUSTOMER_SCOPED:
-                    args["customer_id"] = state["customer_id"]  # overrides anything the model sent
+                injected = {"customer_id": state["customer_id"], "thread_id": _thread(config)}
+                for arg in TOOL_INJECTIONS.get(name, []):
+                    args[arg] = injected[arg]                   # overrides anything the model sent
                 try:
                     result = TOOL_REGISTRY[name].invoke(args)
                 except Exception as exc:
@@ -133,7 +136,7 @@ def human_escalation_node(state: SupportState, config: RunnableConfig = None) ->
     try:
         ticket_id = open_ticket(state["customer_id"], category,
                                 description=latest_user_text(state.get("messages", [])) or "Escalation requested",
-                                priority="High", status="Escalated")
+                                priority="High", status="Escalated", thread_id=_thread(config))
     except Exception:
         logger.exception("Could not open escalation ticket")
         return {

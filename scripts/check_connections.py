@@ -17,15 +17,22 @@ def main() -> int:
     if check_db():
         init_db()
         with session_scope() as s:
-            customers = s.query(Customer).count()
-        print(f"[ok]   database  {url}  ({customers} customers)")
+            customers = s.query(Customer).filter(Customer.role == "customer").count()
+            staff = s.query(Customer).filter(Customer.role == "staff").count()
+        print(f"[ok]   database  {url}  ({customers} customers, {staff} staff)")
         if customers == 0:
             print("       empty: run `python -m app.database.seed` or start the API with SEED_DEMO_DATA=true")
         with session_scope() as s:
-            can_sign_in = s.query(Customer).filter(Customer.password_hash.isnot(None)).count()
+            can_sign_in = s.query(Customer).filter(Customer.password_hash.isnot(None),
+                                                   Customer.role == "customer").count()
         secret = "AUTH_SECRET set" if settings.auth_secret else "AUTH_SECRET missing: everyone is signed out on restart"
         tag = "[ok]  " if settings.auth_secret else "[warn]"
         print(f"{tag} sign-in   {can_sign_in} of {customers} customers have a password; {secret}")
+        if staff:
+            print(f"[ok]   staff     {staff} staff account{'s' if staff != 1 else ''} for the console at /staff")
+        else:
+            print("[warn] staff     no staff accounts: create one with `python -m scripts.create_staff <email> "
+                  "\"<name>\" --generate`")
     else:
         ok = False
         print(f"[FAIL] database  {url}  unreachable")

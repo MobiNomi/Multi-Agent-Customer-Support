@@ -6,9 +6,10 @@ from app.auth.passwords import hash_password
 from app.database.connection import get_engine, init_db, session_scope
 from app.database.models import Base, Customer, Order, Payment, SupportTicket, utcnow
 
-# Demo sign-ins. Shown on the sign-in page only when DEMO_MODE=true.
+# Demo sign-ins. Shown on the sign-in pages only when DEMO_MODE=true.
 DEMO_PASSWORD = "demo1234"
 DEMO_ACCOUNTS = ("CUS-1001", "CUS-1002")
+DEMO_STAFF = {"id": "STF-1001", "name": "Hina Raza", "email": "staff@acmecloud.example"}
 
 
 @lru_cache(maxsize=1)
@@ -22,6 +23,9 @@ def _demo_rows():
     return [
         Customer(id="CUS-1001", name="Ali Khan", email="ali@example.com", plan="Pro", password_hash=pw),
         Customer(id="CUS-1002", name="Sara Ahmed", email="sara@example.com", plan="Enterprise", password_hash=pw),
+        # A support staff member. Staff use the console at /staff, not the customer chat.
+        Customer(id=DEMO_STAFF["id"], name=DEMO_STAFF["name"], email=DEMO_STAFF["email"], plan="Staff",
+                 role="staff", password_hash=pw),
         Order(id="ORD-1034", customer_id="CUS-1001", amount=149.00, status="Delivered"),
         Order(id="ORD-1035", customer_id="CUS-1002", amount=2500.00, status="Processing"),
         # Duplicate payment on ORD-1034 is intentional: it drives the billing demo.
@@ -64,6 +68,19 @@ def ensure_demo_passwords() -> int:
         for c in missing:
             c.password_hash = _demo_password_hash()
         return len(missing)
+
+
+def ensure_demo_staff() -> bool:
+    """Add the demo staff account to databases made before the staff console. Returns True if added."""
+    from sqlalchemy import func
+    with session_scope() as session:
+        if session.get(Customer, DEMO_STAFF["id"]) is not None:
+            return False
+        if session.query(Customer).filter(func.lower(Customer.email) == DEMO_STAFF["email"]).first():
+            return False                      # someone already uses that email; leave it alone
+        session.add(Customer(id=DEMO_STAFF["id"], name=DEMO_STAFF["name"], email=DEMO_STAFF["email"],
+                             plan="Staff", role="staff", password_hash=_demo_password_hash()))
+        return True
 
 
 if __name__ == "__main__":

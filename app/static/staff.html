@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AcmeCloud Support console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231B2A3A'/%3E%3Crect x='7' y='8' width='4.5' height='16' rx='1.5' fill='white'/%3E%3Crect x='13.75' y='8' width='4.5' height='11' rx='1.5' fill='white'/%3E%3Crect x='20.5' y='8' width='4.5' height='7' rx='1.5' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css?v=1.8.0">
+</head>
+<body class="staff-page is-loading">
+  <header class="topbar">
+    <a class="brand brand-staff" href="/staff" aria-label="AcmeCloud Support console home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="currentColor"/>
+        <rect x="7" y="8" width="4.5" height="16" rx="1.5" fill="#fff"/>
+        <rect x="13.75" y="8" width="4.5" height="11" rx="1.5" fill="#fff"/>
+        <rect x="20.5" y="8" width="4.5" height="7" rx="1.5" fill="#fff"/>
+      </svg>
+      <span class="brand-name">AcmeCloud</span>
+      <span class="brand-sub">Support console</span>
+    </a>
+    <div class="topbar-actions" id="console-actions" hidden>
+      <p class="signed-in"><span class="signed-in-label">Signed in as</span> <strong id="staff-name"></strong></p>
+      <button id="sign-out" class="btn-quiet" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main id="login-view" class="login" hidden>
+    <div class="login-inner">
+      <h1 class="login-title">Staff sign-in</h1>
+      <p class="login-text">For the AcmeCloud support team. Customers sign in on the <a href="/">help page</a>.</p>
+      <p id="login-notice" class="login-notice" role="status" hidden></p>
+      <form id="login-form" class="login-form" novalidate>
+        <label for="email">Work email</label>
+        <input id="email" name="email" type="email" autocomplete="username" spellcheck="false" required>
+        <p id="email-error" class="field-error" hidden></p>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <p id="password-error" class="field-error" hidden></p>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button id="login-submit" class="btn-primary" type="submit">Sign in</button>
+      </form>
+      <section id="demo-accounts" class="demo-accounts" aria-labelledby="demo-title" hidden>
+        <h2 id="demo-title">Demo staff account</h2>
+        <p class="demo-text">Password <code id="demo-password"></code>.</p>
+        <div id="demo-list" class="demo-list"></div>
+      </section>
+    </div>
+  </main>
+
+  <main id="console-view" class="console" hidden>
+    <aside class="queue" aria-label="Work queue">
+      <div class="queue-tabs" role="tablist" aria-label="Queues">
+        <button class="queue-tab" role="tab" id="tab-actions" data-tab="actions" aria-selected="true" aria-controls="queue-list">
+          Refunds to approve <span class="count" id="count-actions">0</span>
+        </button>
+        <button class="queue-tab" role="tab" id="tab-tickets" data-tab="tickets" aria-selected="false" aria-controls="queue-list">
+          Tickets <span class="count" id="count-tickets">0</span>
+        </button>
+        <button class="queue-tab" role="tab" id="tab-recent" data-tab="recent" aria-selected="false" aria-controls="queue-list">
+          Decided
+        </button>
+      </div>
+      <ul id="queue-list" class="queue-list" role="tabpanel" aria-labelledby="tab-actions"></ul>
+      <p class="queue-foot" id="queue-foot" aria-live="polite"></p>
+    </aside>
+
+    <section id="detail" class="detail" aria-live="polite" aria-label="Selected item"></section>
+  </main>
+
+  <script src="/static/staff.js?v=1.8.0" defer></script>
+</body>
+</html>

@@ -1,14 +1,14 @@
 # Multi-Agent Customer Support
 
-An AI customer support system in which a team of specialised agents answers customer questions. The agents look up real records and the company's own documents, cite their sources, and hand over to a human when they should.
+An AI customer support system in which a team of specialised agents answers customer questions and solves problems. The agents look up real records and the company's own documents, cite their sources, propose fixes such as refunds that the customer confirms with one click, and hand over to a human when they should.
 
-It is built for **AcmeCloud**, a fictional project-management software company, and includes a working chat website with customer accounts (sign-up and sign-in), a REST API, a searchable knowledge base (RAG), conversation memory and a full test suite.
+It is built for **AcmeCloud**, a fictional project-management software company, and includes a working chat website with customer accounts (sign-up and sign-in), a staff console where support staff approve refunds and answer tickets, a REST API, a searchable knowledge base (RAG), conversation memory and a full test suite.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-1C3C3C)
 ![Groq](https://img.shields.io/badge/LLM-Groq-F55036)
-![Tests](https://img.shields.io/badge/tests-173-2EA44F)
+![Tests](https://img.shields.io/badge/tests-208-2EA44F)
 
 ![Chat page with a Technical desk reply and the "Behind this reply" panel](docs/chat-page.png)
 
@@ -22,6 +22,7 @@ It is built for **AcmeCloud**, a fictional project-management software company, 
 - [Getting started](#getting-started)
 - [Using the chat page](#using-the-chat-page)
 - [Accounts and sign-in](#accounts-and-sign-in)
+- [Actions and the staff console](#actions-and-the-staff-console)
 - [API](#api)
 - [Knowledge base and RAG](#knowledge-base-and-rag)
 - [Demo data](#demo-data)
@@ -44,6 +45,8 @@ A customer types a question into the chat page. Behind it, an AI team handles th
   - **Technical**: API errors, login problems, sync and performance issues.
   - **General**: plans, features, accounts, privacy, everything else.
 - **Tools** let the agents act instead of guess. They can search the company documents, check the customer's account and payments, and open support tickets.
+- **Actions with confirmation**: agents can propose a refund, an order cancellation or a new sign-in email. Nothing changes until the customer presses **Confirm**, and refunds also need a staff member's approval.
+- **Staff console** at `/staff`: support staff approve or reject refunds and answer tickets. Their decisions and replies appear in the customer's chat as messages from the support team.
 - **Human handoff**: when a customer asks for a person or is very upset, the system opens an escalated ticket and tells them their ticket number.
 
 Main features:
@@ -53,6 +56,8 @@ Main features:
 | Multi-agent routing | A supervisor classifies every message and sends it to the right specialist, using earlier turns to understand short follow-ups like "yes, do it". |
 | Retrieval-augmented answers | Agents answer policy, pricing and how-to questions only from the company's documents, and cite the section they used. |
 | Account tools | Agents read the customer's orders and payments and open tickets in the database. |
+| Actions with confirmation | Agents propose refunds, order cancellations and email changes. The customer confirms with a button; refunds then wait for staff approval. The AI never changes an account by itself. |
+| Staff console | A separate page for support staff: a refund approval queue and a ticket inbox, each with the customer's details and the full conversation. Approvals, rejections and replies reach the customer's chat within seconds. |
 | Customer accounts | Customers create an account or sign in with email and password. Passwords are stored as Argon2 hashes, sessions use signed tokens in an HttpOnly cookie, accounts lock after 5 wrong passwords, and sign-ups are rate-limited. |
 | Guardrails | Plain-code safety checks hide card, CNIC and password numbers before anything is sent or saved, stop instruction-override attempts, refuse off-topic requests, limit tickets, and fix replies that cite unread documents or claim refunds were paid. |
 | Customer data isolation | The customer comes from the signed-in session, and the server, not the AI, decides whose account a tool reads. A customer can never see someone else's orders. |
@@ -60,7 +65,7 @@ Main features:
 | Chat website | Desk tabs on each reply, citation chips, ticket numbers, and a panel that shows exactly how each reply was produced. |
 | Loop protection | Agents get a limited number of tool rounds per message and can't repeat identical calls. |
 | Measured retrieval | A set of 38 customer questions scores the search quality, and a test fails if it gets worse. |
-| Offline tests | 169 tests run with a fake model, including 31 red-team attack messages: no API key, no network, about 25 seconds. |
+| Offline tests | 202 tests run with a fake model, including 31 red-team attack messages: no API key, no network, about 35 seconds. |
 
 ---
 
@@ -81,6 +86,7 @@ flowchart TD
     B & T & G -->|tool calls| X[Tool executor]
     X --> KB[(Knowledge base: chunked company docs)]
     X --> DB[(Database: customers, orders, payments, tickets)]
+    X --> PA[(Pending requests: refund, cancel, email)]
     X -->|results| B & T & G
     B & T & G --> OG[Output guard: citations, refund claims, leaks]
     OG --> Reply([Reply with citations])
@@ -98,10 +104,13 @@ Example: Ali (customer `CUS-1001`) writes *"I was charged twice for ORD-1034."*
 4. **Tools.** The Billing agent:
    - checks the payments on ORD-1034 and finds two $149 payments, one marked *Duplicate* (`TXN-8922`);
    - searches the knowledge base for the duplicate-charge and refund policy;
-   - opens a Billing ticket for the refund.
+   - prepares a refund request for `TXN-8922`. This changes nothing yet: it only creates a pending request.
 5. **Reply.** The agent answers only from the tool results and cites its sources, for example `[Refund policy > Duplicate charges and billing errors]`.
 6. **Save.** The turn is saved to memory.
-7. **Display.** The page shows the reply with a green Billing tab, citation chips and the ticket number. The details panel lists the router's decision, every tool call and the documents used.
+7. **Display.** The page shows the reply with a green Billing tab and citation chips, and under it a card with **Confirm refund request** and **Not now**. The details panel lists the router's decision, every tool call and the documents used.
+8. **Confirm.** Ali presses Confirm. The request moves to the staff console's approval queue.
+9. **Approve.** A staff member opens it at `/staff`, sees Ali's payments and the conversation, and approves. The payment is marked `Refunded`.
+10. **Done.** Within a few seconds Ali's chat shows a message from the support team saying the refund was approved, and the card turns green.
 
 When the router decides the customer wants a person, steps 3 to 5 are replaced by the human handoff: an `Escalated` ticket is created and the customer receives its number.
 
@@ -173,6 +182,7 @@ uvicorn app.main:app --reload
 ```
 
 - Chat page: http://127.0.0.1:8000
+- Staff console: http://127.0.0.1:8000/staff
 - Interactive API docs: http://127.0.0.1:8000/docs
 
 To chat in the terminal instead, with every routing decision and tool call printed:
@@ -191,6 +201,8 @@ python -m scripts.chat_cli --customer CUS-1001
    - The **coloured tab** shows which desk answered: green Billing, violet Technical, teal General, amber Support team (human handoff).
    - **Citation chips** show which document section each fact came from.
    - Any **ticket** the agent opened is shown under the reply.
+   - When the agent proposes a change, a **request card** appears under the reply. Press **Confirm** to go ahead or **Not now** to drop it. A confirmed refund can be withdrawn until staff decide.
+   - Messages from the **support team** (staff decisions and replies) appear in the chat by themselves, with an amber "Support team" tab.
 4. The **Behind this reply** panel shows the router's decision and confidence, each tool call with its arguments, and the help articles used. Click any earlier reply to see its details.
 5. **Start new chat** begins a fresh conversation. Reloading the page keeps the current one, and you stay signed in.
 6. **Sign out** ends the session on this browser.
@@ -249,6 +261,53 @@ When the app starts on a database created before sign-in existed, it adds the ne
 
 ---
 
+## Actions and the staff console
+
+![A refund card that a staff member has approved, with the support team's message in the chat](docs/actions.png)
+
+The agents can do more than answer: they can propose changes to the customer's account. The AI never makes the change itself. It creates a **pending request**, and people decide.
+
+| Request | Proposed when | After the customer confirms |
+|---|---|---|
+| Refund | A duplicate charge is found, or the customer asks for a refund of a payment | Goes to the staff console. A staff member approves (the payment becomes `Refunded`) or rejects it with a reason. |
+| Cancel order | The customer wants to cancel an order that is still `Processing` | The order is cancelled straight away. If it was paid, a refund request goes to the staff console automatically. |
+| Change sign-in email | The customer asks to sign in with a different email | Changed straight away, after checking that no other account uses it. |
+
+How it works:
+
+1. **The agent proposes.** Its tool (`request_refund`, `cancel_order` or `update_email`) checks the details (the payment belongs to this customer, the order can still be cancelled, the email is free) and saves a request with status `awaiting_customer`. The customer ID and the conversation come from the signed-in session, never from the model.
+2. **The customer confirms.** The chat shows a card with the request and **Confirm** / **Not now**. Unconfirmed requests expire after 30 minutes (`ACTION_CONFIRM_MINUTES`). Asking again shows the same request instead of creating a second one.
+3. **Staff decide refunds.** Confirmed refunds appear in the staff console's approval queue.
+4. **The customer sees the outcome.** Every step adds a message to the customer's chat: their own confirmation, the automatic result, or the staff member's decision with any note. The chat page checks for new messages every few seconds, and the messages are added to the conversation memory before the customer's next message, so the assistant knows what happened.
+
+Safety rules, enforced in code:
+
+- Each status change only happens if the request is still in the expected state, so a double click or two staff members approving at once can't refund twice (the second gets `409`).
+- The work is checked again when it runs: a payment that was refunded meanwhile, or an email someone else took, makes the request fail cleanly with nothing changed.
+- Right after proposing, the output guard rewrites any reply that claims the change is already done.
+- Customers can only see and confirm their own requests (`404` otherwise). Customer accounts can't open the staff console, and staff accounts can't use the customer chat (`403`).
+
+### The staff console
+
+![Staff console showing a refund request with the customer's payments and the decision panel](docs/staff-console.png)
+
+Open http://127.0.0.1:8000/staff. In demo mode, sign in as **Hina Raza** (`staff@acmecloud.example`, password `demo1234`).
+
+- **Refunds to approve**: oldest first. Each shows the customer, the amount, the payment and its order (with every payment on it), the reason given, and the whole conversation. **Approve** (with an optional note to the customer) or **Reject** (a reason is required; the customer sees it).
+- **Tickets**: open and escalated tickets, most urgent first. **Send reply** puts your message in the customer's chat; **Close ticket** closes it and tells them. Tickets now remember the chat they came from; older tickets without one keep replies on the ticket only.
+- **Decided**: the latest approvals and rejections, and who made them.
+
+The queue refreshes every 10 seconds. Staff and customers use separate session cookies, so you can have the chat and the console open side by side in one browser, which is the easiest way to demo the whole flow.
+
+Create real staff accounts with:
+
+```bash
+python -m scripts.create_staff hina@yourcompany.com "Hina Raza"             # asks for the password
+python -m scripts.create_staff hina@yourcompany.com "Hina Raza" --generate  # creates and prints a random one
+```
+
+---
+
 ## API
 
 | Method | Endpoint | Sign-in needed | Purpose |
@@ -257,12 +316,31 @@ When the app starts on a database created before sign-in existed, it adds the ne
 | `POST` | `/api/v1/auth/login` | No | Sign in; sets the session cookie and returns the token |
 | `POST` | `/api/v1/auth/logout` | No | Sign out (clears the cookie) |
 | `GET` | `/api/v1/auth/me` | Yes | The signed-in customer |
-| `POST` | `/api/v1/chat` | Yes | Send a message and get the reply |
-| `GET` | `/api/v1/sessions/{session_id}/messages` | Yes | Earlier messages of one of your conversations |
+| `POST` | `/api/v1/chat` | Yes | Send a message and get the reply (with any proposed `actions`) |
+| `GET` | `/api/v1/sessions/{session_id}/messages` | Yes | One of your conversations, with support messages and the current status of each request |
+| `GET` | `/api/v1/sessions/{session_id}/updates?after={id}` | Yes | New support messages since `after`, and every request's status (polled by the chat page) |
+| `GET` | `/api/v1/actions/{id}` | Yes | One of your requests |
+| `POST` | `/api/v1/actions/{id}/confirm` | Yes | Confirm a proposed change |
+| `POST` | `/api/v1/actions/{id}/cancel` | Yes | Drop a proposal, or withdraw a refund staff haven't decided yet |
 | `GET` | `/api/v1/auth/options` | No | Whether sign-up is turned on |
 | `GET` | `/api/v1/demo/accounts` | No | Demo sign-ins (disabled when `DEMO_MODE=false`) |
 | `GET` | `/health` | No | Status of the database, LLM key, memory and knowledge base |
 | `GET` | `/` | No | The chat page |
+
+Staff console (staff accounts only, separate session cookie):
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/staff/login` / `logout` | Staff sign-in and sign-out |
+| `GET` | `/api/v1/staff/me` | The signed-in staff member |
+| `GET` | `/api/v1/staff/queue` | Refunds waiting for approval, open tickets, recent decisions |
+| `GET` | `/api/v1/staff/actions/{id}` | A request with the customer, payment, order and conversation |
+| `POST` | `/api/v1/staff/actions/{id}/approve` | Approve and carry out (`{"note": "..."}` optional) |
+| `POST` | `/api/v1/staff/actions/{id}/reject` | Reject (`{"reason": "..."}` required) |
+| `GET` | `/api/v1/staff/tickets/{id}` | A ticket with its replies and conversation |
+| `POST` | `/api/v1/staff/tickets/{id}/reply` | Reply to the customer (`{"message": "..."}`) |
+| `POST` | `/api/v1/staff/tickets/{id}/close` | Close the ticket (`{"message": "..."}` optional) |
+| `GET` | `/staff` | The staff console page |
 
 ### Example
 
@@ -282,13 +360,13 @@ Instead of the cookie, you can send the `access_token` from the sign-in reply as
 
 ```json
 {
-  "response": "I checked ORD-1034: you were charged $149 twice. The second payment, TXN-8922, is a duplicate. I've opened a refund request... [Refund policy > Duplicate charges and billing errors]",
+  "response": "I checked ORD-1034: you were charged $149 twice, and TXN-8922 is the duplicate... I've prepared a refund request: press Confirm below to send it to our billing team. [Refund policy > Duplicate charges and billing errors]",
   "session_id": "4f083e20df47...",
   "assigned_agent": "billing_agent",
   "intent": "billing",
   "confidence": 0.9,
   "needs_human": false,
-  "ticket_id": "TCK-3530D237",
+  "ticket_id": null,
   "sources": ["Refund policy > Duplicate charges and billing errors"],
   "retrieved": ["Refund policy > Duplicate charges and billing errors", "Billing and payments > Duplicate charges"],
   "guardrails": [],
@@ -296,10 +374,17 @@ Instead of the cookie, you can send the `access_token` from the sign-in reply as
   "tools_used": [
     {"name": "get_order_payments", "args": {"order_id": "ORD-1034"}},
     {"name": "search_knowledge_base", "args": {"query": "duplicate charge refund"}},
-    {"name": "create_support_ticket", "args": {"category": "Billing", "description": "Refund duplicate TXN-8922", "priority": "High"}}
+    {"name": "request_refund", "args": {"transaction_id": "TXN-8922", "reason": "Charged twice for ORD-1034"}}
+  ],
+  "actions": [
+    {"id": "ACT-11AE27C5", "kind": "refund", "kind_label": "Refund", "status": "awaiting_customer",
+     "status_text": "Waiting for you to confirm", "summary": "Refund $149.00 for duplicate payment TXN-8922 on order ORD-1034",
+     "amount": 149.0, "requires_staff": true, "expires_at": "2026-11-09T19:16:02Z"}
   ]
 }
 ```
+
+Confirm it with `curl -b cookies.txt -X POST http://127.0.0.1:8000/api/v1/actions/ACT-11AE27C5/confirm`.
 
 Send the returned `session_id` with the next message to continue the same conversation. The exact wording of replies depends on the model.
 
@@ -307,14 +392,17 @@ Send the returned `session_id` with the next message to continue the same conver
 - `retrieved`: every section the agent looked up.
 - `guardrails`: the safety checks that changed or stopped something, each with a plain-English `message`.
 - `message_masked`: your message as it was actually sent and saved, when card numbers or passwords were hidden.
+- `actions`: changes this reply proposed, each waiting for confirmation.
 
 | Status | Meaning |
 |---|---|
 | 200 / 201 | Success (201 when an account is created) |
 | 401 | Not signed in, or the session expired. On sign-in: wrong email or password |
-| 403 | Sign-up is turned off |
-| 409 | On sign-up: an account with this email already exists |
-| 422 | Invalid request (for example, an empty message, a weak password or a badly formed email) |
+| 403 | Sign-up is turned off, or the wrong kind of account (a staff account on the customer chat, or a customer on the staff console) |
+| 404 | The request or ticket doesn't exist, or isn't yours |
+| 409 | On sign-up: an account with this email already exists. On requests: already confirmed, cancelled or decided |
+| 410 | The request expired before it was confirmed |
+| 422 | Invalid request (for example, an empty message, a weak password, a badly formed email, or a rejection without a reason) |
 | 429 | Too many wrong passwords (account locked for a while), too many sign-ups from one network, or messages sent too quickly |
 | 503 | `GROQ_API_KEY` is not set |
 
@@ -375,7 +463,8 @@ updated: 2026-11-01
 | Customer | Sign-in | Plan | Order | Notes |
 |---|---|---|---|---|
 | `CUS-1001` Ali Khan | `ali@example.com` / `demo1234` | Pro | `ORD-1034` ($149) | Charged twice: `TXN-8921` and duplicate `TXN-8922` |
-| `CUS-1002` Sara Ahmed | `sara@example.com` / `demo1234` | Enterprise | `ORD-1035` ($2,500) | Order still processing |
+| `CUS-1002` Sara Ahmed | `sara@example.com` / `demo1234` | Enterprise | `ORD-1035` ($2,500) | Order still processing, so it can be cancelled |
+| `STF-1001` Hina Raza (staff) | `staff@acmecloud.example` / `demo1234` | Staff | | Signs in on the staff console at `/staff` |
 
 All company information, people and domains (`.example`) are invented.
 
@@ -383,7 +472,10 @@ All company information, people and domains (`.example`) are invented.
 
 | Message (signed in as Ali) | Expected behaviour |
 |---|---|
-| I was charged twice for ORD-1034 | Billing finds the duplicate payment, cites the refund policy and opens a ticket |
+| I was charged twice for ORD-1034 | Billing finds the duplicate payment, cites the refund policy and shows a refund card. Confirm it, then approve it in the staff console, and watch the support team's message arrive in the chat |
+| Did my refund go through? | Checks your requests and says where the refund stands |
+| Please change my email to ali.new@example.com | Shows an email-change card; after Confirm you sign in with the new email |
+| Please cancel my order ORD-1035 *(signed in as Sara)* | Shows a cancellation card; after Confirm the order is cancelled and the $2,500 refund goes to the staff console |
 | Can I get a refund on my yearly plan? | Answers "within 14 days" from the refund policy, with a citation |
 | My API keeps returning error 401 | Technical gives the documented troubleshooting steps |
 | What are your support hours? | General answers from the company overview |
@@ -408,9 +500,10 @@ Guardrails are plain-code checks around the AI, so they apply the same way every
 | | Rate limit | At most `CHAT_MESSAGES_PER_MINUTE` messages per customer (default 10). |
 | **Input guard** | Attempts to override the instructions ("ignore all previous instructions", "show me your system prompt", fake `<system>` tags, "developer mode", and similar) | Stopped before any model is called, with a fixed safe reply. |
 | **Router** | Off-topic requests (homework, essays, other products) and unsafe ones (harassment, threats, harmful requests) | A fixed reply, with no agent and no tool calls, so they cost almost nothing. |
-| **Actions** | Tickets | A ticket on the same topic within the hour is reused rather than duplicated. Repeat requests for a human reuse the escalated ticket. At most `MAX_TICKETS_PER_HOUR` new tickets per customer (default 3). |
+| **Actions** | Account changes | Refunds, cancellations and email changes are only proposed. The customer confirms each one, refunds also need staff approval, and every step is checked again when it runs. See [Actions and the staff console](#actions-and-the-staff-console). |
+| | Tickets | A ticket on the same topic within the hour is reused rather than duplicated. Repeat requests for a human reuse the escalated ticket. At most `MAX_TICKETS_PER_HOUR` new tickets per customer (default 3). |
 | **Output guard** | Citations | A sentence whose only citation points at a document the agent never retrieved is removed. |
-| | Refund claims | "Your refund has been processed" and similar are replaced: the bot can only open refund requests. |
+| | "It's done" claims | "Your refund has been processed" and similar are replaced unless staff really approved a refund. Right after proposing a change, any claim that it already happened ("your email has been updated") is replaced with a reminder to press Confirm. |
 | | Prompt leaks | A reply that repeats the internal instructions is replaced. |
 | | Internal names and numbers | Tool names become plain words, and any card number in a reply is hidden. |
 
@@ -437,7 +530,7 @@ Other protections, enforced in code:
 Set by the agents' instructions, and backed by the output guard:
 
 - Answer company facts only from the knowledge base, cite sources, and say "I don't know" when nothing matches.
-- Never claim a refund has been paid; open a refund ticket instead.
+- Never claim a refund, cancellation or change is done; propose it and let the customer confirm.
 
 See [Limitations and roadmap](#limitations-and-roadmap) for what is not covered yet.
 
@@ -446,8 +539,8 @@ See [Limitations and roadmap](#limitations-and-roadmap) for what is not covered 
 ## Testing
 
 ```bash
-pytest              # 169 offline tests with a fake model: no API key or network needed
-pytest -m live      # 4 tests against the real Groq model (needs GROQ_API_KEY)
+pytest              # 202 offline tests with a fake model: no API key or network needed
+pytest -m live      # 6 tests against the real Groq model (needs GROQ_API_KEY)
 ```
 
 | Test file | Covers |
@@ -458,6 +551,7 @@ pytest -m live      # 4 tests against the real Groq model (needs GROQ_API_KEY)
 | `test_guardrails.py` | Masking, override detection, red-team set, output checks, ticket limits, chat rate limit, refusals |
 | `test_graph.py` | Routing, tool loops, human handoff, memory across turns, loop protection |
 | `test_api.py` | Every endpoint, sessions, error codes, sources, the chat page files |
+| `test_actions.py` | Proposals, confirm, cancel, expiry, staff approve and reject, double approvals, email change, order cancellation, ticket replies, staff vs customer access, database upgrade |
 | `test_memory.py` | Conversations surviving a server restart |
 | `test_rag.py` | Loading, chunking, BM25 and the search tool |
 | `test_retrieval_eval.py` | Retrieval quality gate |
@@ -492,9 +586,10 @@ All settings are read from environment variables or `.env` (see [`.env.example`]
 | `GUARDRAILS_ENABLED` | `true` | Turn the guardrails on or off |
 | `CHAT_MESSAGES_PER_MINUTE` | `10` | Messages one customer may send per minute |
 | `MAX_TICKETS_PER_HOUR` | `3` | New tickets one customer can cause per hour |
+| `ACTION_CONFIRM_MINUTES` | `30` | How long a proposed change waits for the customer's Confirm before it expires |
 | `REGISTRATION_ENABLED` | `true` | Let new customers create an account |
 | `REGISTRATIONS_PER_HOUR` | `5` | New accounts allowed per IP address per hour |
-| `DEMO_MODE` | `true` | Give the demo accounts their demo password and list them on the sign-in page |
+| `DEMO_MODE` | `true` | Give the demo accounts their demo password, add the demo staff account, and list them on the sign-in pages |
 | `CORS_ORIGINS` | none | Comma-separated origins allowed to call the API from another domain |
 | `SQL_ECHO` | `false` | Log every SQL statement |
 
@@ -516,7 +611,7 @@ The app runs on http://localhost:8000 and reads its settings from `.env`. The da
 
 ```
 app/
-├── main.py                 FastAPI app: chat endpoint, history, health, chat page
+├── main.py                 FastAPI app: chat endpoint, history, health, pages
 ├── config.py               settings from environment / .env
 ├── llm.py                  Groq client, created on first use
 ├── memory.py               conversation memory (SQLite checkpointer)
@@ -526,7 +621,18 @@ app/
 │   ├── tokens.py           signed session tokens (JWT)
 │   ├── service.py          sign-up and sign-in rules, lockout, password changes
 │   ├── ratelimit.py        per-IP limit on sign-ups
-│   └── dependencies.py     reads the signed-in customer from each request
+│   ├── session.py          sets the session cookie
+│   └── dependencies.py     reads the signed-in customer or staff member from each request
+├── actions/
+│   ├── service.py          proposals, confirm, cancel, approve, reject, and carrying them out
+│   └── updates.py          support messages for the customer's chat
+├── staff/
+│   └── service.py          approval queue, request details, ticket replies and closing
+├── api/
+│   ├── actions.py          customer endpoints for requests and chat updates
+│   ├── staff.py            staff console endpoints
+│   ├── conversation.py     a conversation with its support messages and requests
+│   └── schemas.py          request and response models
 ├── guardrails/
 │   ├── sensitive.py        hide card, CNIC, password, CVV and IBAN numbers
 │   ├── injection.py        spot instruction-override attempts
@@ -536,7 +642,7 @@ app/
 ├── database/
 │   ├── connection.py       engine, sessions, init and health check
 │   ├── migrations.py       adds new columns to older databases
-│   ├── models.py           Customer, Order, Payment, SupportTicket
+│   ├── models.py           Customer, Order, Payment, SupportTicket, PendingAction, ...
 │   └── seed.py             demo data and demo sign-ins
 ├── graph/
 │   ├── workflow.py         graph wiring, tool executor, human handoff
@@ -553,11 +659,12 @@ app/
 │   └── evaluation.py       hit@k and MRR
 ├── tools/
 │   ├── db_tools.py         customer details, order payments, tickets
+│   ├── action_tools.py     request_refund, cancel_order, update_email, get_my_requests
 │   └── knowledge_tools.py  search_knowledge_base
-└── static/                 chat page: index.html, styles.css, app.js, fonts/
+└── static/                 chat page (index.html, app.js), staff console (staff.html, staff.js), styles.css, fonts/
 knowledge/                  company documents (the RAG source)
 evals/                      retrieval question set, red-team messages
-scripts/                    check_connections, chat_cli, knowledge, set_password
+scripts/                    check_connections, chat_cli, knowledge, set_password, create_staff
 tests/                      offline and live tests
 docs/                       screenshots
 Dockerfile, docker-compose.yml
@@ -574,7 +681,11 @@ Current limitations:
 - **Guardrails are rule-based.** The input guard catches common override phrasings, not every possible one; subtler attempts rely on the agents' instructions and the output guard. Masking covers the listed number formats only. Refund-claim detection matches common phrasings and could miss unusual wording.
 - **Rate limits live in memory.** They reset when the server restarts and aren't shared between several server processes.
 - **Keyword search only.** BM25 can miss questions phrased very differently from the documents. Embedding-based or hybrid search would handle this better.
-- **Small demo dataset:** two customers.
+- **Updates arrive by polling.** The chat page checks for support messages every 8 seconds and the staff console refreshes every 10 seconds; there are no push notifications (WebSockets) or emails yet.
+- **One approval step.** Any staff member can approve any refund; there are no amount limits, second approvers or roles such as team lead.
+- **Email changes aren't verified.** The new address gets no confirmation email before it becomes the sign-in email.
+- **Payments are simulated.** Approving a refund marks the payment `Refunded` in the database; no payment provider is called.
+- **Small demo dataset:** two customers and one staff member.
 
 Planned:
 
@@ -584,7 +695,9 @@ Planned:
 - [ ] Email confirmation and password reset by email
 - [ ] Hybrid retrieval (BM25 + embeddings) and a larger evaluation set
 - [ ] Fake data generator with hundreds of customers, orders and payments
-- [ ] Staff inbox for escalated tickets, with notifications
+- [x] Actions with confirmation (refund, cancel order, change email) and a staff console with an approval queue and ticket inbox
+- [ ] Notifications (email or push) for staff and customers, and live takeover of a chat by staff
+- [ ] Feedback on replies and an analytics dashboard, including questions the bot couldn't answer
 - [ ] Streaming replies
 - [ ] Public deployment
 

@@ -52,7 +52,7 @@ class _KeywordRouter:
             return self.schema(intent="unsafe", confidence=0.9, needs_human=False)
         if any(w in latest for w in ("human", "lawyer", "manager", "person")):
             return self.schema(intent="escalate", confidence=0.95, needs_human=True)
-        if any(w in latest for w in ("charge", "refund", "invoice", "payment", "billing")):
+        if any(w in latest for w in ("charge", "refund", "invoice", "payment", "billing", "cancel my order")):
             return self.schema(intent="billing", confidence=0.9, needs_human=False)
         if any(w in latest for w in ("api", "error", "bug", "login", "crash")):
             return self.schema(intent="technical", confidence=0.9, needs_human=False)

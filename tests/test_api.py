@@ -153,7 +153,10 @@ def test_chat_page_is_served(client):
 
 def test_demo_accounts(anon):
     data = anon.get("/api/v1/demo/accounts").json()
-    assert {"name": "Ali Khan", "email": "ali@example.com", "plan": "Pro", "password": "demo1234"} in data
+    assert {"name": "Ali Khan", "email": "ali@example.com", "plan": "Pro", "password": "demo1234",
+            "role": "customer"} in data
+    assert {"name": "Hina Raza", "email": "staff@acmecloud.example", "plan": "Staff", "password": "demo1234",
+            "role": "staff"} in data
 
 
 def test_demo_accounts_disabled(anon, monkeypatch):

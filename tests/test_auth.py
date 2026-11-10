@@ -172,7 +172,8 @@ def test_old_database_gets_login_columns(tmp_path):
                           "email VARCHAR NOT NULL, plan VARCHAR, created_at DATETIME)"))
         conn.execute(text("INSERT INTO customers VALUES ('CUS-1','A','a@example.com','Pro',NULL)"))
     added = ensure_schema(engine)
-    assert set(added) == {"password_hash", "role", "failed_logins", "locked_until", "last_login_at", "token_version"}
+    assert set(added) == {f"customers.{c}" for c in ("password_hash", "role", "failed_logins", "locked_until",
+                                                    "last_login_at", "token_version")}
     assert ensure_schema(engine) == []          # running again changes nothing
     with engine.connect() as conn:
         row = conn.execute(text("SELECT role, failed_logins, token_version FROM customers")).one()

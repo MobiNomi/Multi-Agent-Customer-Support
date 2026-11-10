@@ -53,6 +53,7 @@ class Settings:
     guardrails_enabled: bool
     chat_messages_per_minute: int
     max_tickets_per_hour: int
+    action_confirm_minutes: int
     cors_origins: tuple
 
 
@@ -86,5 +87,6 @@ def get_settings() -> Settings:
         guardrails_enabled=_bool(os.getenv("GUARDRAILS_ENABLED"), True),
         chat_messages_per_minute=int(os.getenv("CHAT_MESSAGES_PER_MINUTE", "10")),
         max_tickets_per_hour=int(os.getenv("MAX_TICKETS_PER_HOUR", "3")),
+        action_confirm_minutes=int(os.getenv("ACTION_CONFIRM_MINUTES", "30")),
         cors_origins=tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()),
     )

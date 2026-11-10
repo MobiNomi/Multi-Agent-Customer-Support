@@ -4,14 +4,17 @@ from app.config import get_settings
 from app.graph.history import current_turn_tool_rounds, history_for_llm
 from app.graph.state import SupportState
 from app.llm import get_llm
+from app.tools.action_tools import cancel_order, get_my_requests, request_refund, update_email
 from app.tools.db_tools import create_support_ticket, get_customer_details, get_order_payments
 from app.tools.knowledge_tools import search_knowledge_base
 
 # Which tools each specialist may call. The tool executor enforces this list too.
+# request_refund, update_email and cancel_order only *propose*: the customer confirms with a button.
 AGENT_TOOLS = {
-    "billing_agent": [search_knowledge_base, get_customer_details, get_order_payments, create_support_ticket],
-    "technical_agent": [search_knowledge_base, get_customer_details, create_support_ticket],
-    "general_agent": [search_knowledge_base],
+    "billing_agent": [search_knowledge_base, get_customer_details, get_order_payments, request_refund,
+                      cancel_order, get_my_requests, create_support_ticket],
+    "technical_agent": [search_knowledge_base, get_customer_details, update_email, create_support_ticket],
+    "general_agent": [search_knowledge_base, update_email, get_my_requests],
 }
 
 COMMON_RULES = (
@@ -25,6 +28,9 @@ COMMON_RULES = (
     "- Customer facts (orders, payments, tickets) must come from the account tools. Every account tool "
     "already acts on the current customer's own account; you cannot look up other customers. If a tool "
     "returns an error, tell the customer plainly and ask them to check the ID.\n"
+    "- Account changes (refunds, cancellations, a new sign-in email) are only prepared by your tools; "
+    "follow the instructions in the tool result. A change is done only when a later account update in the "
+    "conversation says so.\n"
     "- Keep replies short, friendly and specific."
 )
 
@@ -37,21 +43,25 @@ PROMPTS = {
         "search_knowledge_base so you can tell them what happens next and how long it takes.\n"
         "For general policy questions that name no order or payment (for example 'can I get a refund on an "
         "annual plan?'), one knowledge base search is enough; don't look up account records.\n"
-        "If a duplicate charge is confirmed, name the duplicate transaction ID and open a Billing ticket for "
-        "the refund. You cannot issue refunds yourself: say a refund request has been opened and give the "
-        "ticket ID. Never say the money has already been returned."
+        "If a duplicate charge is confirmed, name the duplicate transaction ID and call request_refund with it. "
+        "If the customer wants to cancel an order, call cancel_order. To check on earlier requests, call "
+        "get_my_requests. Open a Billing ticket only for problems these tools can't handle. You never move "
+        "money yourself, so never say money has been returned."
     ),
     "technical_agent": (
         "You are the Technical Support Specialist for AcmeCloud. You handle bugs, API errors, login, sync, "
         "performance and automation problems.\n"
         "Search the knowledge base for the matching troubleshooting guide or error code and give its steps as "
         "a short numbered list. If the problem needs engineering (an outage, data loss, a repeating error) or "
-        "the documented steps did not help, open a Technical ticket and give the ticket ID."
+        "the documented steps did not help, open a Technical ticket and give the ticket ID. If the customer "
+        "wants to sign in with a different email address, call update_email."
     ),
     "general_agent": (
         "You are the General Customer Support Agent for AcmeCloud. You answer questions about the company, "
         "plans, features, accounts, security and privacy, and you handle greetings and small talk.\n"
-        "Greetings and thanks need no search. For anything about AcmeCloud, search first."
+        "Greetings and thanks need no search. For anything about AcmeCloud, search first. If the customer "
+        "wants to change the email address they sign in with, call update_email. For questions about their "
+        "earlier requests (refunds, changes), call get_my_requests."
     ),
 }
 

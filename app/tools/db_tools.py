@@ -6,7 +6,7 @@ read or write their own records, whatever the model is talked into asking for.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any, Dict, List, Literal
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from langchain_core.tools import InjectedToolArg, tool
 
@@ -23,8 +23,11 @@ def customer_exists(customer_id: str) -> bool:
 
 
 def open_ticket(customer_id: str, category: str, description: str,
-                priority: str = "Medium", status: str = "Open") -> str:
-    """Insert a ticket and return its ID. Shared by the tool and the escalation node."""
+                priority: str = "Medium", status: str = "Open", thread_id: Optional[str] = None) -> str:
+    """Insert a ticket and return its ID. Shared by the tool and the escalation node.
+
+    `thread_id` links the ticket to the chat it came from, so staff replies appear in that chat.
+    """
     ticket_id = f"TCK-{uuid.uuid4().hex[:8].upper()}"
     with session_scope() as session:
         session.add(SupportTicket(
@@ -34,6 +37,7 @@ def open_ticket(customer_id: str, category: str, description: str,
             priority=priority,
             status=status,
             description=description[:2000],
+            thread_id=thread_id,
         ))
     return ticket_id
 
@@ -88,10 +92,12 @@ def create_support_ticket(
     description: str,
     customer_id: Annotated[str, InjectedToolArg],
     priority: TicketPriority = "Medium",
+    thread_id: Annotated[Optional[str], InjectedToolArg] = None,
 ) -> Dict[str, Any]:
-    """Open a support ticket for follow-up by the support team (refund requests, bugs, anything you cannot resolve)."""
+    """Open a support ticket for follow-up by the support team (bugs, outages, anything you cannot resolve).
+    For refunds use request_refund instead."""
     try:
-        ticket_id = open_ticket(customer_id, category, description, priority=priority)
+        ticket_id = open_ticket(customer_id, category, description, priority=priority, thread_id=thread_id)
     except Exception as exc:  # surfaced to the model as data, not a crash
         return {"error": f"Failed to create ticket: {exc}"}
     return {"status": "success", "ticket_id": ticket_id, "message": f"Support ticket {ticket_id} created."}
